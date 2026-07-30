@@ -28,7 +28,7 @@ BEPUSDT_OKX_UID=...
 
 只配置 Binance 或只配置 OKX 都可以；两组都不配置时，交易所轮询会自动关闭。
 
-## Docker / iStoreOS 部署
+## Docker 部署
 
 在这个目录执行：
 
@@ -45,7 +45,7 @@ docker compose up -d --build
 ./log
 ```
 
-在 iStoreOS 上把项目放到 `/mnt/nvme0n1-4/docker/bepusdt-exchange` 即可，数据会保存到该目录下的 `data` 和 `log` 文件夹。
+将项目放到自定义的 Docker 项目目录即可，数据会保存到该目录下的 `data` 和 `log` 文件夹。
 
 服务监听 `8080` 端口。第一次启动后访问：
 
