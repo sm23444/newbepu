@@ -18,6 +18,8 @@ import (
 type Auth struct {
 }
 
+const invalidLoginCredentials = "用户名或密码错误"
+
 type authLoginReq struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
@@ -327,18 +329,26 @@ func (Auth) Login(ctx *gin.Context) {
 	}
 
 	var username = model.GetK(model.AdminUsername)
+	limitKey := loginLimiterKey(ctx.ClientIP(), username)
+	if !adminLoginLimiter.reserve(limitKey) {
+		base.Response(ctx, 400, invalidLoginCredentials)
+
+		return
+	}
+
 	if req.Username != username {
-		base.Response(ctx, 400, "用户名或密码错误")
+		base.Response(ctx, 400, invalidLoginCredentials)
 
 		return
 	}
 
 	var password = model.GetK(model.AdminPassword)
 	if bcrypt.CompareHashAndPassword([]byte(password), []byte(req.Password)) != nil {
-		base.Response(ctx, 400, "用户名或密码错误")
+		base.Response(ctx, 400, invalidLoginCredentials)
 
 		return
 	}
+	adminLoginLimiter.clear(limitKey)
 
 	rand, _ := utils.GenerateTradeId()
 

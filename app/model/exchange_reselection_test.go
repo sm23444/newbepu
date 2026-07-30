@@ -204,3 +204,62 @@ func TestConcurrentExchangeSelectionAllocatesUniqueAmounts(t *testing.T) {
 		t.Fatalf("concurrent orders received duplicate UID+amount allocation: %s", persisted[0].Amount)
 	}
 }
+
+func TestRebuildZeroAmountOrdersPreservesExclusiveAddressLock(t *testing.T) {
+	db := newExchangeReselectionTestDB(t)
+
+	if err := db.Create(&Conf{K: AtomUSDT, V: "0.01"}).Error; err != nil {
+		t.Fatalf("seed USDT atomicity: %v", err)
+	}
+	if err := db.Create(&Wallet{
+		Name:      "Polygon wallet",
+		Status:    WaStatusEnable,
+		Address:   "0x1111111111111111111111111111111111111111",
+		MatchAddr: "0x1111111111111111111111111111111111111111",
+		TradeType: string(UsdtPolygon),
+	}).Error; err != nil {
+		t.Fatalf("seed wallet: %v", err)
+	}
+	if err := db.Create(&Rate{Rate: "7", RawRate: 7, Fiat: string(CNY), Crypto: string(USDT)}).Error; err != nil {
+		t.Fatalf("seed rate: %v", err)
+	}
+
+	orders := make([]Order, 0, 2)
+	for _, id := range []string{"zero-one", "zero-two"} {
+		order, err := BuildPendingOrder(OrderParams{
+			Money:   decimal.Zero,
+			ApiType: OrderApiTypeEpusdtOrder,
+			OrderId: "merchant-" + id,
+			Fiat:    CNY,
+			Timeout: 1200,
+		})
+		if err != nil {
+			t.Fatalf("build zero-amount order %s: %v", id, err)
+		}
+		if !order.AddressLocked {
+			t.Fatalf("pending zero-amount order %s did not reserve an address lock", id)
+		}
+		orders = append(orders, order)
+	}
+
+	params := func(order Order) OrderParams {
+		return OrderParams{
+			OrderId:   order.OrderId,
+			TradeType: UsdtPolygon,
+			Money:     decimal.Zero,
+			Fiat:      CNY,
+			Timeout:   1200,
+		}
+	}
+	selected, err := RebuildOrder(orders[0], params(orders[0]))
+	if err != nil {
+		t.Fatalf("select payment method for first zero-amount order: %v", err)
+	}
+	if !selected.AddressLocked || selected.Amount != "0" {
+		t.Fatalf("rebuilt order lock/amount = %t/%q, want true/0", selected.AddressLocked, selected.Amount)
+	}
+
+	if _, err := RebuildOrder(orders[1], params(orders[1])); err == nil || !strings.Contains(err.Error(), "暂无可用钱包地址") {
+		t.Fatalf("second zero-amount order should not reuse the locked wallet, got %v", err)
+	}
+}

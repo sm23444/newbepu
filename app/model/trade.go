@@ -112,7 +112,7 @@ func BuildOrder(p OrderParams, trade Trade) (Order, error) {
 		Money:         p.Money.String(),
 		Address:       trade.Wallet.GetPaymentAddr(),
 		MatchAddress:  trade.Wallet.GetMatchAddr(),
-		AddressLocked: p.Money.IsZero(), // 零值订单，地址锁定 独占
+		AddressLocked: p.AddressLocked || p.Money.IsZero(), // 零值或显式锁定订单独占地址
 		Status:        OrderStatusWaiting,
 		Name:          p.Name,
 		ApiType:       p.ApiType,
@@ -216,6 +216,10 @@ func rebuildOrder(t Order, p OrderParams) (Order, error) {
 		return t, fmt.Errorf("exchange payment method cannot be reselected")
 	}
 
+	// A zero-amount order reserves an address exclusively. Preserve that
+	// invariant when the pending order is rebuilt with a payment method.
+	p.AddressLocked = p.AddressLocked || t.AddressLocked || p.Money.IsZero()
+
 	data, err := BuildTrade(p)
 	if err != nil {
 		return t, err
@@ -232,6 +236,7 @@ func rebuildOrder(t Order, p OrderParams) (Order, error) {
 	t.Crypto = data.Crypto
 	t.Amount = data.Amount
 	t.Money = p.Money.String()
+	t.AddressLocked = p.AddressLocked
 	t.TradeType = p.TradeType
 	t.Rate = fmt.Sprintf("%v", data.Rate)
 	t.ExpiredAt = CalcTradeExpiredAt(p.Timeout)
@@ -246,7 +251,8 @@ func rebuildOrder(t Order, p OrderParams) (Order, error) {
 		Where("amount = ?", current.Amount).
 		Where("money = ?", current.Money).
 		Where("address = ?", current.Address).
-		Where("match_address = ?", current.MatchAddress)
+		Where("match_address = ?", current.MatchAddress).
+		Where("address_locked = ?", current.AddressLocked)
 	if p.ClientFingerprint != "" {
 		query = query.Where("(client_fingerprint = '' OR client_fingerprint = ?)", p.ClientFingerprint)
 	}
@@ -258,6 +264,7 @@ func rebuildOrder(t Order, p OrderParams) (Order, error) {
 		"crypto":             t.Crypto,
 		"amount":             t.Amount,
 		"money":              t.Money,
+		"address_locked":     t.AddressLocked,
 		"trade_type":         t.TradeType,
 		"rate":               t.Rate,
 		"expired_at":         t.ExpiredAt,

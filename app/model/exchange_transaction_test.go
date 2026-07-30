@@ -79,7 +79,7 @@ func newExchangeTestTransaction(now time.Time, transactionID string) ExchangeTra
 	}
 }
 
-func TestPendingExchangeTransactionsDoesNotHideNewestBehindOldLimit(t *testing.T) {
+func TestPendingExchangeTransactionsRotatesPastBatchLimit(t *testing.T) {
 	db := newExchangeTransactionTestDB(t)
 	start := time.Now().UTC().Add(-12 * time.Hour).Truncate(time.Second)
 	rows := make([]ExchangeTransaction, 0, 501)
@@ -91,20 +91,29 @@ func TestPendingExchangeTransactionsDoesNotHideNewestBehindOldLimit(t *testing.T
 		t.Fatalf("create transactions: %v", err)
 	}
 
-	pending, err := PendingExchangeTransactions("okx", start.Add(-time.Second), 500)
+	pending, cursor, err := PendingExchangeTransactions("okx", start.Add(-time.Second), 0, 500)
 	if err != nil {
 		t.Fatalf("query pending transactions: %v", err)
 	}
 	if len(pending) != 500 {
 		t.Fatalf("pending count = %d, want 500", len(pending))
 	}
-	if pending[0].TransactionID != "newest" {
-		t.Fatalf("first pending transaction = %q, want newest", pending[0].TransactionID)
+	if pending[0].TransactionID != "old-000" {
+		t.Fatalf("first pending transaction = %q, want oldest unvisited row", pending[0].TransactionID)
 	}
-	for _, row := range pending {
-		if row.TransactionID == "old-000" {
-			t.Fatal("oldest transaction occupied the limit while a newer transaction was available")
-		}
+	if cursor == 0 {
+		t.Fatal("first full page did not advance the pending cursor")
+	}
+
+	next, cursor, err := PendingExchangeTransactions("okx", start.Add(-time.Second), cursor, 500)
+	if err != nil {
+		t.Fatalf("query second pending page: %v", err)
+	}
+	if len(next) != 1 || next[0].TransactionID != "newest" {
+		t.Fatalf("second pending page = %#v, want newest transaction", next)
+	}
+	if cursor != 0 {
+		t.Fatalf("cursor after final partial page = %d, want wrap to zero", cursor)
 	}
 }
 
@@ -135,7 +144,7 @@ func TestPendingExchangeTransactionsBatchMarksLinkedOrders(t *testing.T) {
 		t.Fatalf("create transactions: %v", err)
 	}
 
-	pending, err := PendingExchangeTransactions("okx", now.Add(-time.Second), 10)
+	pending, _, err := PendingExchangeTransactions("okx", now.Add(-time.Second), 0, 10)
 	if err != nil {
 		t.Fatalf("query pending transactions: %v", err)
 	}

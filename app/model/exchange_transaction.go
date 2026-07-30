@@ -46,22 +46,29 @@ func StoreExchangeTransactions(rows []ExchangeTransaction) error {
 	return Db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
 }
 
-func PendingExchangeTransactions(provider string, since time.Time, limit int) ([]ExchangeTransaction, error) {
+func PendingExchangeTransactions(provider string, since time.Time, afterID int64, limit int) ([]ExchangeTransaction, int64, error) {
 	var rows []ExchangeTransaction
 	if limit <= 0 {
 		limit = 500
 	}
 
-	err := Db.Where("provider = ? and status = ? and occurred_at >= ?", provider, ExchangeTransactionPending, since).
-		Order("occurred_at desc, id desc").
+	query := Db.Where("provider = ? and status = ? and occurred_at >= ?", provider, ExchangeTransactionPending, since)
+	if afterID > 0 {
+		query = query.Where("id > ?", afterID)
+	}
+	err := query.Order("id asc").
 		Limit(limit).
 		Find(&rows).Error
 	if err != nil {
-		return nil, err
+		return nil, afterID, err
 	}
 
 	if len(rows) == 0 {
-		return []ExchangeTransaction{}, nil
+		return []ExchangeTransaction{}, 0, nil
+	}
+	nextID := rows[len(rows)-1].ID
+	if len(rows) < limit {
+		nextID = 0
 	}
 
 	transactionIDs := make([]string, 0, len(rows))
@@ -80,7 +87,7 @@ func PendingExchangeTransactions(provider string, since time.Time, limit int) ([
 		Where("ref_hash in (?) and trade_type in (?) and status in (?)", transactionIDs, tradeTypes, []int{OrderStatusConfirming, OrderStatusSuccess}).
 		Order("id desc").
 		Find(&linkedOrders).Error; err != nil {
-		return nil, err
+		return nil, afterID, err
 	}
 
 	type transferKey struct {
@@ -106,10 +113,10 @@ func PendingExchangeTransactions(provider string, since time.Time, limit int) ([
 		processed[row.ID] = orderID
 	}
 	if err := markExchangeTransactionsProcessedBatch(processed); err != nil {
-		return nil, err
+		return nil, afterID, err
 	}
 
-	return pending, nil
+	return pending, nextID, nil
 }
 
 func markExchangeTransactionsProcessedBatch(assignments map[int64]int64) error {

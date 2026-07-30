@@ -3,6 +3,8 @@ package task
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,11 +23,17 @@ import (
 	blockapi "github.com/v03413/bepusdt/app/core"
 	"github.com/v03413/bepusdt/app/log"
 	"github.com/v03413/bepusdt/app/model"
+	tasknotify "github.com/v03413/bepusdt/app/task/notify"
 )
 
 const (
-	blockParseMaxNum = 10 // 每次解析区块的最大数量
-	evmTransferEvent = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	blockParseMaxNum                 = 10 // 每次解析区块的最大数量
+	evmTransferEvent                 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	evmBlockRetryBaseDelay           = 500 * time.Millisecond
+	evmBlockRetryMaxDelay            = 15 * time.Second
+	evmReceiptAnomalyThreshold       = 6
+	evmReceiptAnomalyGracePeriod     = 2 * time.Minute
+	evmReceiptAnomalyObservationTime = 30 * time.Second
 )
 
 var chainBlockNum sync.Map
@@ -48,11 +56,55 @@ type evm struct {
 	Client           *http.Client
 	blockScanQueue   *chanx.UnboundedChan[evmBlock]
 	LookbackInterval time.Duration // 回溯时每批入队的间隔，控制 RPC 调用速率；默认 500ms
+	blockRetryAfter  func(time.Duration, func())
+	receiptMu        sync.Mutex
+	receiptAnomalies map[evmReceiptKey]evmReceiptAnomaly
 }
 
 type evmBlock struct {
-	From int64
-	To   int64
+	From    int64
+	To      int64
+	Attempt int
+}
+
+type evmRPCRequest struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params"`
+	ID      int    `json:"id"`
+}
+
+type evmLogFilter struct {
+	FromBlock string   `json:"fromBlock"`
+	ToBlock   string   `json:"toBlock"`
+	Address   []string `json:"address"`
+	Topics    []string `json:"topics"`
+}
+
+type evmReceiptKind uint8
+
+const (
+	evmReceiptMissing evmReceiptKind = iota
+	evmReceiptSuccess
+	evmReceiptFailed
+	evmReceiptAnomalous
+)
+
+type evmReceipt struct {
+	Kind        evmReceiptKind
+	BlockNumber int64
+	BlockHash   string
+	Reason      string
+}
+
+type evmReceiptKey struct {
+	OrderID int64
+	RefHash string
+}
+
+type evmReceiptAnomaly struct {
+	Count     int
+	FirstSeen time.Time
 }
 
 func parseEVMQuantity(value string) (int64, error) {
@@ -92,10 +144,79 @@ func parseEVMAmount(value string) (*big.Int, error) {
 	return amount, nil
 }
 
+func evmBlockRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+
+	delay := evmBlockRetryBaseDelay
+	for i := 1; i < attempt; i++ {
+		if delay >= evmBlockRetryMaxDelay/2 {
+			return evmBlockRetryMaxDelay
+		}
+		delay *= 2
+	}
+	if delay > evmBlockRetryMaxDelay {
+		return evmBlockRetryMaxDelay
+	}
+
+	return delay
+}
+
+func shouldSplitEVMBlockRange(reason string) bool {
+	reason = strings.ToLower(reason)
+	markers := []string{
+		"block range is too wide",
+		"block range too wide",
+		"query returned more than",
+		"range is too large",
+		"response size exceeded",
+		"log response size",
+		"too many results",
+		"request entity too large",
+		"status code: 413",
+		"-32005",
+	}
+	for _, marker := range markers {
+		if strings.Contains(reason, marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func splitEVMBlockRange(b evmBlock) []evmBlock {
+	if b.From >= b.To {
+		return []evmBlock{b}
+	}
+
+	middle := b.From + (b.To-b.From)/2
+	return []evmBlock{
+		{From: b.From, To: middle, Attempt: b.Attempt},
+		{From: middle + 1, To: b.To, Attempt: b.Attempt},
+	}
+}
+
 func (e *evm) retryBlock(b evmBlock, reason string) {
 	conf.RecordFailure(e.Network)
-	e.blockScanQueue.In <- b
-	log.Task.Warn(reason)
+	b.Attempt++
+	retries := []evmBlock{b}
+	if shouldSplitEVMBlockRange(reason) && b.From < b.To {
+		retries = splitEVMBlockRange(b)
+	}
+	delay := evmBlockRetryDelay(b.Attempt)
+	requeue := func() {
+		for _, retry := range retries {
+			e.blockScanQueue.In <- retry
+		}
+	}
+	if e.blockRetryAfter != nil {
+		e.blockRetryAfter(delay, requeue)
+	} else {
+		time.AfterFunc(delay, requeue)
+	}
+	log.Task.Warn(fmt.Sprintf("%s; retrying %d block range(s) after %s", reason, len(retries), delay))
 }
 
 func (e *evm) syncBlocksForward(ctx context.Context) {
@@ -245,9 +366,7 @@ func (e *evm) blockDispatch(ctx context.Context) {
 			return
 		case n := <-e.blockScanQueue.Out:
 			if err := p.Invoke(n); err != nil {
-				e.blockScanQueue.In <- n
-
-				log.Task.Warn("Evm Block Dispatch Error invoking process block:", err)
+				e.retryBlock(n, fmt.Sprintf("Evm Block Dispatch Error invoking process block: %v", err))
 			}
 		}
 	}
@@ -280,9 +399,7 @@ func (e *evm) getBlockByNumber(a any) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := e.Client.Do(req)
 	if err != nil {
-		conf.RecordFailure(e.Network)
-		e.blockScanQueue.In <- b
-		log.Task.Warn("eth_getBlockByNumber Error sending request:", err)
+		e.retryBlock(b, fmt.Sprintf("eth_getBlockByNumber Error sending request: %v", err))
 
 		return
 	}
@@ -379,8 +496,7 @@ func (e *evm) getBlockByNumber(a any) {
 
 	transfers, err := e.parseEventTransfer(b, blockTimestamp)
 	if err != nil {
-		e.retryBlock(b, "Evm Block Parse Error parsing block transfer")
-		log.Task.Warn("Evm Block Parse Error parsing block transfer:", err)
+		e.retryBlock(b, fmt.Sprintf("Evm Block Parse Error parsing block transfer: %v", err))
 
 		return
 	}
@@ -441,7 +557,13 @@ func (e *evm) parseNativeTransfer(array []gjson.Result, num int, timestamp time.
 
 func (e *evm) parseEventTransfer(b evmBlock, timestamp map[int64]time.Time) ([]transfer, error) {
 	transfers := make([]transfer, 0)
-	post := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"fromBlock":"0x%x","toBlock":"0x%x","topics":["%s"]}],"id":1}`, b.From, b.To, evmTransferEvent))
+	post, err := buildEVMLogRequest(model.Network(e.Network), b)
+	if err != nil {
+		return transfers, err
+	}
+	if post == nil {
+		return transfers, nil
+	}
 	resp, err := e.Client.Post(e.rpcEndpoint(), "application/json", bytes.NewBuffer(post))
 	if err != nil {
 		return transfers, fmt.Errorf("eth_getLogs post: %w", err)
@@ -477,8 +599,11 @@ func (e *evm) parseEventTransfer(b evmBlock, timestamp map[int64]time.Time) ([]t
 		if !itm.IsObject() {
 			return transfers, errors.New("eth_getLogs contains a non-object log")
 		}
+		if itm.Get("removed").Bool() {
+			continue
+		}
 		to := itm.Get("address").String()
-		tradeType, ok := model.GetContractTrade(to)
+		tradeType, ok := model.GetNetworkContractTrade(model.Network(e.Network), to)
 		if !ok {
 
 			continue
@@ -523,7 +648,7 @@ func (e *evm) parseEventTransfer(b evmBlock, timestamp map[int64]time.Time) ([]t
 			Network:     e.Network,
 			FromAddress: from,
 			RecvAddress: recv,
-			Amount:      decimal.NewFromBigInt(amount, model.GetContractDecimal(to)),
+			Amount:      decimal.NewFromBigInt(amount, model.GetTradeDecimal(tradeType)),
 			TxHash:      txHash,
 			BlockNum:    int(blockNumber),
 			Timestamp:   blockTime,
@@ -534,74 +659,314 @@ func (e *evm) parseEventTransfer(b evmBlock, timestamp map[int64]time.Time) ([]t
 	return transfers, nil
 }
 
-func (e *evm) tradeConfirmHandle(ctx context.Context) {
-	var orders = getConfirmingOrders(model.GetNetworkTrades(model.Network(e.Network)))
+func buildEVMLogRequest(network model.Network, b evmBlock) ([]byte, error) {
+	contracts := model.GetNetworkContractAddresses(network)
+	if len(contracts) == 0 {
+		return nil, nil
+	}
 
-	var handle = func(o model.Order) {
-		if model.GetC(model.BlockOffsetConfirm) == "1" {
-			last, ok := chainBlockNum.Load(e.Network)
-			if !ok {
-				return
-			}
-			if cast.ToInt(last)-o.RefBlockNum < e.Block.ConfirmedOffset {
-				return
-			}
-		}
+	post, err := json.Marshal(evmRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "eth_getLogs",
+		Params: []any{evmLogFilter{
+			FromBlock: fmt.Sprintf("0x%x", b.From),
+			ToBlock:   fmt.Sprintf("0x%x", b.To),
+			Address:   contracts,
+			Topics:    []string{evmTransferEvent},
+		}},
+		ID: 1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode eth_getLogs request: %w", err)
+	}
 
-		post := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":["%s"],"id":1}`, o.RefHash))
-		req, err := http.NewRequestWithContext(ctx, "POST", e.rpcEndpoint(), bytes.NewBuffer(post))
-		if err != nil {
-			log.Task.Warn("evm tradeConfirmHandle Error creating request:", err)
+	return post, nil
+}
 
-			return
-		}
+func isEVMHash(value string) bool {
+	if len(value) != 66 || !strings.EqualFold(value[:2], "0x") {
+		return false
+	}
+	_, err := hex.DecodeString(value[2:])
 
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := e.Client.Do(req)
-		if err != nil {
-			log.Task.Warn("evm tradeConfirmHandle Error sending request:", err)
+	return err == nil
+}
 
-			return
-		}
+func inspectEVMReceipt(result gjson.Result, expectedHash string) evmReceipt {
+	if result.Type == gjson.Null || strings.TrimSpace(result.Raw) == "null" {
+		return evmReceipt{Kind: evmReceiptMissing, Reason: "transaction receipt is null"}
+	}
+	if !result.IsObject() {
+		return evmReceipt{Kind: evmReceiptAnomalous, Reason: "transaction receipt is not an object"}
+	}
 
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			log.Task.Warn("evm tradeConfirmHandle Error response status code:", resp.StatusCode)
+	txHash := result.Get("transactionHash").String()
+	if !isEVMHash(txHash) {
+		return evmReceipt{Kind: evmReceiptAnomalous, Reason: "transaction receipt has an invalid transaction hash"}
+	}
+	if !strings.EqualFold(txHash, expectedHash) {
+		return evmReceipt{Kind: evmReceiptAnomalous, Reason: "transaction receipt hash does not match the order"}
+	}
 
-			return
-		}
+	blockNumber, err := parseEVMQuantity(result.Get("blockNumber").String())
+	if err != nil || blockNumber <= 0 {
+		return evmReceipt{Kind: evmReceiptAnomalous, Reason: "transaction receipt has an invalid block number"}
+	}
+	blockHash := result.Get("blockHash").String()
+	if !isEVMHash(blockHash) {
+		return evmReceipt{Kind: evmReceiptAnomalous, Reason: "transaction receipt has an invalid block hash"}
+	}
 
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			log.Task.Warn("evm tradeConfirmHandle Error reading response body:", err)
+	receipt := evmReceipt{BlockNumber: blockNumber, BlockHash: blockHash}
+	switch strings.ToLower(result.Get("status").String()) {
+	case "0x1":
+		receipt.Kind = evmReceiptSuccess
+	case "0x0":
+		receipt.Kind = evmReceiptFailed
+	default:
+		receipt.Kind = evmReceiptAnomalous
+		receipt.Reason = "transaction receipt has an invalid status"
+	}
 
-			return
-		}
-		if !gjson.ValidBytes(body) {
-			log.Task.Warn("evm tradeConfirmHandle Error: invalid JSON response")
+	return receipt
+}
 
-			return
-		}
+func inspectCanonicalEVMBlock(result gjson.Result, blockNumber int64, blockHash string) string {
+	if result.Type == gjson.Null || strings.TrimSpace(result.Raw) == "null" {
+		return "canonical block is null"
+	}
+	if !result.IsObject() {
+		return "canonical block is not an object"
+	}
 
-		data := gjson.ParseBytes(body)
-		if !data.IsObject() {
-			log.Task.Warn("evm tradeConfirmHandle Error: response is not an object")
+	actualNumber, err := parseEVMQuantity(result.Get("number").String())
+	if err != nil || actualNumber != blockNumber {
+		return "canonical block number does not match the receipt"
+	}
+	actualHash := result.Get("hash").String()
+	if !isEVMHash(actualHash) {
+		return "canonical block has an invalid hash"
+	}
+	if !strings.EqualFold(actualHash, blockHash) {
+		return "canonical block hash does not match the receipt"
+	}
 
-			return
-		}
-		rpcError := data.Get("error")
-		if rpcError.Exists() && rpcError.Type != gjson.Null {
-			log.Task.Warn(fmt.Sprintf("%s eth_getTransactionReceipt response error %s", e.Network, data.Get("error").String()))
+	return ""
+}
 
-			return
-		}
+func (e *evm) rpcCall(ctx context.Context, method string, params []any) (gjson.Result, error) {
+	post, err := json.Marshal(evmRPCRequest{JSONRPC: "2.0", Method: method, Params: params, ID: 1})
+	if err != nil {
+		return gjson.Result{}, fmt.Errorf("encode %s request: %w", method, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", e.rpcEndpoint(), bytes.NewBuffer(post))
+	if err != nil {
+		return gjson.Result{}, fmt.Errorf("create %s request: %w", method, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 
-		if data.Get("result.status").String() == "0x1" {
-			markFinalConfirmed(o)
+	resp, err := e.Client.Do(req)
+	if err != nil {
+		return gjson.Result{}, fmt.Errorf("send %s request: %w", method, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return gjson.Result{}, fmt.Errorf("%s %s response status code: %d", e.Network, method, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return gjson.Result{}, fmt.Errorf("read %s response: %w", method, err)
+	}
+	if !gjson.ValidBytes(body) {
+		return gjson.Result{}, fmt.Errorf("%s returned invalid JSON", method)
+	}
+	data := gjson.ParseBytes(body)
+	if !data.IsObject() {
+		return gjson.Result{}, fmt.Errorf("%s response is not an object", method)
+	}
+	rpcError := data.Get("error")
+	if rpcError.Exists() && rpcError.Type != gjson.Null {
+		return gjson.Result{}, fmt.Errorf("%s %s response error %s", e.Network, method, rpcError.String())
+	}
+	result := data.Get("result")
+	if result.Raw == "" {
+		return gjson.Result{}, fmt.Errorf("%s response has no result", method)
+	}
+
+	return result, nil
+}
+
+func (e *evm) blockHasConfirmationDepth(blockNumber int64) bool {
+	lastValue, ok := chainBlockNum.Load(e.Network)
+	if !ok || blockNumber <= 0 {
+		return false
+	}
+	last, ok := lastValue.(int64)
+	if !ok || last < blockNumber {
+		return false
+	}
+
+	return last-blockNumber >= int64(e.Block.ConfirmedOffset)
+}
+
+func (e *evm) clearReceiptAnomaly(o model.Order) {
+	key := evmReceiptKey{OrderID: o.ID, RefHash: strings.ToLower(o.RefHash)}
+	e.receiptMu.Lock()
+	delete(e.receiptAnomalies, key)
+	e.receiptMu.Unlock()
+}
+
+func (e *evm) recordReceiptAnomaly(o model.Order, referenceBlock int64, now time.Time) bool {
+	lastValue, ok := chainBlockNum.Load(e.Network)
+	if !ok {
+		return false
+	}
+	last, ok := lastValue.(int64)
+	if !ok || last <= 0 {
+		return false
+	}
+	if referenceBlock > 0 && (last < referenceBlock || last-referenceBlock < int64(e.Block.ConfirmedOffset)) {
+		return false
+	}
+	if o.UpdatedAt != nil {
+		updatedAt := o.UpdatedAt.Time()
+		if now.Before(updatedAt.Add(evmReceiptAnomalyGracePeriod)) {
+			return false
 		}
 	}
 
-	runOrderConfirmations(ctx, orders, handle)
+	key := evmReceiptKey{OrderID: o.ID, RefHash: strings.ToLower(o.RefHash)}
+	e.receiptMu.Lock()
+	defer e.receiptMu.Unlock()
+	if e.receiptAnomalies == nil {
+		e.receiptAnomalies = make(map[evmReceiptKey]evmReceiptAnomaly)
+	}
+	observation, exists := e.receiptAnomalies[key]
+	if !exists {
+		observation.FirstSeen = now
+	}
+	observation.Count++
+	e.receiptAnomalies[key] = observation
+	if observation.Count < evmReceiptAnomalyThreshold || now.Sub(observation.FirstSeen) < evmReceiptAnomalyObservationTime {
+		return false
+	}
+
+	return true
+}
+
+func (e *evm) pruneReceiptAnomalies(orders []model.Order) {
+	active := make(map[evmReceiptKey]struct{}, len(orders))
+	for _, order := range orders {
+		active[evmReceiptKey{OrderID: order.ID, RefHash: strings.ToLower(order.RefHash)}] = struct{}{}
+	}
+
+	e.receiptMu.Lock()
+	for key := range e.receiptAnomalies {
+		if _, ok := active[key]; !ok {
+			delete(e.receiptAnomalies, key)
+		}
+	}
+	e.receiptMu.Unlock()
+}
+
+func (e *evm) handleReceiptAnomaly(o model.Order, referenceBlock int64, reason string) {
+	if !e.recordReceiptAnomaly(o, referenceBlock, time.Now()) {
+		log.Task.Warn(fmt.Sprintf("%s order %d confirmation anomaly: %s", e.Network, o.ID, reason))
+
+		return
+	}
+
+	if err := o.SetFailed(); err != nil {
+		log.Task.Warn("evm confirmation SetFailed failed:", err)
+
+		return
+	}
+	e.clearReceiptAnomaly(o)
+	log.Task.Warn(fmt.Sprintf("%s order %d confirmation failed after repeated anomalies: %s", e.Network, o.ID, reason))
+	tasknotify.Bepusdt(o)
+}
+
+func (e *evm) failReceipt(o model.Order, reason string) {
+	if err := o.SetFailed(); err != nil {
+		log.Task.Warn("evm confirmation SetFailed failed:", err)
+
+		return
+	}
+	e.clearReceiptAnomaly(o)
+	log.Task.Warn(fmt.Sprintf("%s order %d confirmation failed: %s", e.Network, o.ID, reason))
+	tasknotify.Bepusdt(o)
+}
+
+func (e *evm) confirmOrder(ctx context.Context, o model.Order) {
+	if !isEVMHash(o.RefHash) {
+		e.handleReceiptAnomaly(o, int64(o.RefBlockNum), "order has an invalid transaction hash")
+
+		return
+	}
+	if o.RefBlockNum <= 0 {
+		e.handleReceiptAnomaly(o, 0, "order has an invalid reference block number")
+
+		return
+	}
+	if model.GetC(model.BlockOffsetConfirm) == "1" && !e.blockHasConfirmationDepth(int64(o.RefBlockNum)) {
+		return
+	}
+
+	result, err := e.rpcCall(ctx, "eth_getTransactionReceipt", []any{o.RefHash})
+	if err != nil {
+		log.Task.Warn("evm tradeConfirmHandle:", err)
+
+		return
+	}
+	receipt := inspectEVMReceipt(result, o.RefHash)
+	if receipt.Kind == evmReceiptMissing || receipt.Kind == evmReceiptAnomalous {
+		referenceBlock := int64(o.RefBlockNum)
+		if receipt.BlockNumber > 0 {
+			referenceBlock = receipt.BlockNumber
+		}
+		e.handleReceiptAnomaly(o, referenceBlock, receipt.Reason)
+
+		return
+	}
+
+	if receipt.Kind == evmReceiptFailed && !e.blockHasConfirmationDepth(receipt.BlockNumber) {
+		return
+	}
+	if model.GetC(model.BlockOffsetConfirm) == "1" && !e.blockHasConfirmationDepth(receipt.BlockNumber) {
+		return
+	}
+
+	canonicalBlock, err := e.rpcCall(ctx, "eth_getBlockByNumber", []any{fmt.Sprintf("0x%x", receipt.BlockNumber), false})
+	if err != nil {
+		log.Task.Warn("evm tradeConfirmHandle canonical block check:", err)
+
+		return
+	}
+	if reason := inspectCanonicalEVMBlock(canonicalBlock, receipt.BlockNumber, receipt.BlockHash); reason != "" {
+		e.handleReceiptAnomaly(o, receipt.BlockNumber, reason)
+
+		return
+	}
+
+	e.clearReceiptAnomaly(o)
+	if receipt.Kind == evmReceiptFailed {
+		e.failReceipt(o, "transaction receipt status is 0x0")
+
+		return
+	}
+	if err := markFinalConfirmed(o); err != nil {
+		return
+	}
+	e.clearReceiptAnomaly(o)
+}
+
+func (e *evm) tradeConfirmHandle(ctx context.Context) {
+	orders := getConfirmingOrders(model.GetNetworkTrades(model.Network(e.Network)))
+	e.pruneReceiptAnomalies(orders)
+	runOrderConfirmations(ctx, orders, func(o model.Order) {
+		e.confirmOrder(ctx, o)
+	})
 }
 
 func (e *evm) rpcEndpoint() string {

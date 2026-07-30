@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -330,8 +331,9 @@ func init() {
 		networkTradesMap[c.Network] = append(networkTradesMap[c.Network], t)
 		networkEndpointMap[c.Network] = c.EndpointKey
 		if c.Contract != "" {
-			contractDecimalMap[c.Contract] = c.Decimal
-			contractTradeMap[c.Contract] = t
+			contract := normalizeContractAddress(c.Contract)
+			contractDecimalMap[contract] = c.Decimal
+			contractTradeMap[contract] = t
 		}
 		if c.AmountRange != (Range{}) {
 			tradeAmountRangeMap[t] = c.AmountRange
@@ -396,19 +398,62 @@ func GetNetworkTrades(n Network) []TradeType {
 	return list
 }
 
+// GetNetworkContractAddresses returns a stable copy of the registered token
+// contracts for a network. Callers may safely modify the returned slice.
+func GetNetworkContractAddresses(n Network) []string {
+	seen := make(map[string]struct{})
+	addresses := make([]string, 0)
+	for _, tradeType := range networkTradesMap[n] {
+		trade, ok := registry[tradeType]
+		if !ok || trade.Contract == "" {
+			continue
+		}
+
+		address := normalizeContractAddress(trade.Contract)
+		if _, exists := seen[address]; exists {
+			continue
+		}
+		seen[address] = struct{}{}
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+
+	return addresses
+}
+
 func GetContractTrade(addr string) (TradeType, bool) {
-	t, ok := contractTradeMap[addr]
+	t, ok := contractTradeMap[normalizeContractAddress(addr)]
 
 	return t, ok
 }
 
+func GetNetworkContractTrade(n Network, addr string) (TradeType, bool) {
+	addr = normalizeContractAddress(addr)
+	for _, tradeType := range networkTradesMap[n] {
+		trade, ok := registry[tradeType]
+		if ok && normalizeContractAddress(trade.Contract) == addr {
+			return tradeType, true
+		}
+	}
+
+	return "", false
+}
+
 func GetContractDecimal(addr string) int32 {
-	if d, ok := contractDecimalMap[addr]; ok {
+	if d, ok := contractDecimalMap[normalizeContractAddress(addr)]; ok {
 
 		return d
 	}
 
 	return -6
+}
+
+func normalizeContractAddress(addr string) string {
+	if len(addr) == 42 && strings.EqualFold(addr[:2], "0x") {
+		return strings.ToLower(addr)
+	}
+
+	return addr
 }
 
 func GetTxUrl(t TradeType, hash string) string {

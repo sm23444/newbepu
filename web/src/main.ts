@@ -15,8 +15,6 @@ import ArcoVueIcon from "@arco-design/web-vue/es/icon";
 import "virtual:svg-icons-register";
 // 引入i18n
 import i18n from "@/lang/index";
-// 引入字体
-import "@/assets/fonts/fonts.scss";
 // 引入自定义指令
 import directives from "@/directives/index";
 

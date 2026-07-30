@@ -20,9 +20,10 @@ var (
 )
 
 type exchangeRuntime struct {
-	config  exchange.RuntimeConfig
-	clients []exchange.Client
-	cleaned time.Time
+	config         exchange.RuntimeConfig
+	clients        []exchange.Client
+	pendingCursors map[string]int64
+	cleaned        time.Time
 }
 
 func init() {
@@ -105,7 +106,11 @@ func ReloadExchangePayments() error {
 		return nil
 	}
 	exchangeMu.Lock()
-	exchangePoller = &exchangeRuntime{config: config, clients: clients}
+	exchangePoller = &exchangeRuntime{
+		config:         config,
+		clients:        clients,
+		pendingCursors: make(map[string]int64, len(clients)),
+	}
 	exchangeMu.Unlock()
 	providers := make([]string, 0, len(clients))
 	for _, client := range clients {
@@ -122,7 +127,7 @@ func exchangePollingLoop(ctx context.Context) {
 	var nextPoll time.Time
 	poll := func(runtime *exchangeRuntime) {
 		for _, client := range runtime.clients {
-			pollExchange(ctx, client)
+			runtime.pendingCursors[client.Provider()] = pollExchange(ctx, client, runtime.pendingCursors[client.Provider()])
 		}
 		if runtime.cleaned.IsZero() || time.Since(runtime.cleaned) >= time.Hour {
 			if err := model.DeleteExchangeTransactionsBefore(time.Now().Add(-7 * 24 * time.Hour)); err != nil {
@@ -188,10 +193,10 @@ func TestExchangePayment(ctx context.Context, provider string) (int, error) {
 	return len(transactions), nil
 }
 
-func pollExchange(ctx context.Context, client exchange.Client) {
+func pollExchange(ctx context.Context, client exchange.Client, pendingCursor int64) int64 {
 	tradeType := exchangeTradeType(client.Provider())
 	if tradeType == "" || !hasLookbackOrders([]model.TradeType{tradeType}) {
-		return
+		return pendingCursor
 	}
 
 	now := time.Now()
@@ -199,7 +204,7 @@ func pollExchange(ctx context.Context, client exchange.Client) {
 	transactions, err := client.ListIncoming(ctx, "USDT", start, now)
 	if err != nil {
 		log.Task.Warn(client.Provider(), " exchange payment scan failed:", err)
-		return
+		return pendingCursor
 	}
 	rows := make([]model.ExchangeTransaction, 0, len(transactions))
 	for _, transaction := range transactions {
@@ -215,12 +220,12 @@ func pollExchange(ctx context.Context, client exchange.Client) {
 	}
 	if err := model.StoreExchangeTransactions(rows); err != nil {
 		log.Task.Warn(client.Provider(), " exchange transaction store failed:", err)
-		return
+		return pendingCursor
 	}
-	pending, err := model.PendingExchangeTransactions(client.Provider(), start, 500)
+	pending, nextCursor, err := model.PendingExchangeTransactions(client.Provider(), start, pendingCursor, 500)
 	if err != nil {
 		log.Task.Warn(client.Provider(), " exchange pending transaction query failed:", err)
-		return
+		return pendingCursor
 	}
 	transfers := make([]transfer, 0, len(pending))
 	for _, row := range pending {
@@ -246,6 +251,8 @@ func pollExchange(ctx context.Context, client exchange.Client) {
 	if len(transfers) > 0 {
 		transferQueue.In <- transfers
 	}
+
+	return nextCursor
 }
 
 func exchangeTradeType(provider string) model.TradeType {

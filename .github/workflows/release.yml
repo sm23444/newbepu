@@ -1,47 +1,81 @@
 name: Build and Release
+
 on:
-  workflow_dispatch:
-  create:
-    branches:
-      - main
+  push:
     tags:
-      - v*
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
 jobs:
   build-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v6
         with:
-          ref: 'main'
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           fetch-depth: 0
           fetch-tags: true
-      - name: Git Fetch Tags
-        run: git fetch --force --tags
+
+      - name: Set release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) echo "::error::Release tag must start with v"; exit 1 ;;
+          esac
+
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          if [[ -z "$tag_commit" || "$tag_commit" != "$(git rev-parse HEAD)" ]]; then
+            echo "::error::Checked-out commit does not match tag $RELEASE_TAG"
+            exit 1
+          fi
+          echo "VERSION_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+          run_install: false
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24.18.0'
-      - name: Install pnpm
-        run: npm install -g pnpm@10.28.2
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
       - name: Install frontend dependencies
         working-directory: ./web
         run: pnpm install --frozen-lockfile --shamefully-hoist
+
       - name: Build frontend
         working-directory: ./web
         run: pnpm run build:prod
+
       - name: Move frontend files to static/secure
+        shell: bash
         run: |
           rm -rf static/secure
           mkdir -p static/secure
-          cp -r web/dist/* static/secure/
-      - name: Generate App Version
-        run: |
-          echo "VERSION_TAG=$(git describe --tags --abbrev=0)-$(git rev-parse --short=7 HEAD)" >> $GITHUB_ENV
+          cp -a web/dist/. static/secure/
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.5'
+          cache: true
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

@@ -1,47 +1,77 @@
-name: docker-latest
+name: docker
+
 on:
-  workflow_dispatch:
-  create:
+  push:
     branches:
       - main
     tags:
-      - v*
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
 env:
-  APP_NAME: bepusdt
-  DOCKERHUB_REPO: v03413/bepusdt
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: 'main'
-          fetch-depth: 0
-          fetch-tags: true
+
+      - name: Set image version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="$(git rev-parse --short=7 HEAD)"
+          fi
+          echo "APP_VERSION=${version}" >> "$GITHUB_ENV"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Login to DockerHub
+
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Generate App Version
-        run: |
-          echo "APP_VERSION=$(git rev-parse --short=7 HEAD)" >> $GITHUB_ENV
-          echo "VERSION_TAG=$(git describe --tags --abbrev=0)-$(git rev-parse --short=7 HEAD)" >> $GITHUB_ENV
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,prefix=sha-
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./dockerfile
           platforms: |
             linux/amd64
             linux/arm64
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
-            VERSION=${{ env.VERSION_TAG }}
-          tags: |
-            ${{ env.DOCKERHUB_REPO }}:latest
-            ${{ env.DOCKERHUB_REPO }}:${{ env.APP_VERSION }}
+            VERSION=${{ env.APP_VERSION }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
