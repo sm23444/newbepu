@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sm 收银台</title>
+    <link rel="shortcut icon" href="/checkout/sm/assets/img/bepusdt.svg">
+    <link rel="stylesheet" href="/checkout/sm/assets/css/checkout.css?v=sm-20260727-3">
+    <script src="/checkout/sm/assets/js/jquery.min.js"></script>
+    <script src="/checkout/sm/assets/js/jquery.qrcode.min.js"></script>
+    <script src="/checkout/sm/assets/js/i18next.min.js"></script>
+    <script src="/checkout/sm/assets/js/checkout.js?v=sm-20260727-4"></script>
+</head>
+<body>
+<div class="checkout-card" id="selectionStage" style="display:none;">
+    <div class="card-header">
+        <div class="brand">
+            <div class="brand-logo">
+                <img src="/checkout/sm/assets/img/sm-pay-logo.png?v=sm-20260722-1" alt="sm Pay">
+            </div>
+            <span class="brand-name" data-i18n="brandName">smPay</span>
+        </div>
+        <a id="helpBtnS" href="#" class="help-btn" data-i18n="[title]helpTitle" title="联系客服" target="_blank">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+        </a>
+    </div>
+    <div class="selection-notice-row">
+        <div class="timer-badge-wrap">
+            <div class="timer-badge">
+                <span class="timer-label" data-i18n="timerLabel">到期时间</span>
+                <span class="timer-text" id="timerDisplay">--:--:--</span>
+            </div>
+            <svg class="timer-ring" aria-hidden="true">
+                <rect class="timer-ring-track" x="0.75" y="0.75" rx="7.25" ry="7.25" pathLength="100"/>
+                <rect class="timer-ring-bar" x="0.75" y="0.75" rx="7.25" ry="7.25" pathLength="100"/>
+            </svg>
+        </div>
+    </div>
+    <div class="divider"></div>
+    <div class="order-info selection-order-info">
+        <div class="order-row">
+            <span class="order-label" data-i18n="orderAmount">订单金额</span>
+            <span class="order-value" id="orderAmountS">--</span>
+        </div>
+        <div class="order-row">
+            <span class="order-label" data-i18n="merchantOrder">商户订单</span>
+            <span class="order-value" id="orderIdS">--</span>
+        </div>
+    </div>
+    <div class="divider"></div>
+    <div class="form-section">
+        <label class="form-label" data-i18n="currencyLabel">币种</label>
+        <div class="payment-option-grid currency-option-grid" id="currencyGrid"></div>
+        <label class="form-label" id="networkSectionLabel" data-i18n="networkLabel">网络</label>
+        <div class="payment-option-grid network-option-grid" id="networkGrid"></div>
+    </div>
+    <div class="pay-btn-wrap">
+        <button class="pay-btn" id="payBtn" disabled data-i18n="payBtn">继续付款</button>
+    </div>
+</div>
+<div class="checkout-card" id="paymentStage" style="display:none;">
+    <div class="card-header">
+        <div class="brand">
+            <div class="brand-logo">
+                <img src="/checkout/sm/assets/img/sm-pay-logo.png?v=sm-20260722-1" alt="sm Pay">
+            </div>
+            <span class="brand-name" data-i18n="brandName">smPay</span>
+        </div>
+        <a id="helpBtnQ" href="#" class="help-btn" data-i18n="[title]helpTitle" title="联系客服" target="_blank">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+        </a>
+    </div>
+    <div class="amount-block payment-amount-block">
+        <div class="amount-crypto-row">
+            <span class="amount-crypto-value" id="payAmountQ"></span>
+            <span class="copy-trigger" id="copyAmountQBtn" data-i18n="[title]copyAmountTitle" title="复制金额">
+                <span class="copy-trigger-icon" id="copyAmountQIcon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                </span>
+            </span>
+        </div>
+        <div class="amount-network-line">
+            <span class="network-tag" id="payNetworkQ">--</span>
+        </div>
+    </div>
+    <div class="divider"></div>
+    <div class="order-info payment-order-info">
+        <div class="order-row">
+            <span class="order-label" data-i18n="orderAmount">订单金额</span>
+            <span class="order-value" id="orderAmountQ">--</span>
+        </div>
+        <div class="order-row">
+            <span class="order-label" data-i18n="orderNumber">订单号</span>
+            <span class="order-value" id="orderIdQ">--</span>
+        </div>
+    </div>
+    <div class="divider"></div>
+    <div class="qr-stage">
+        <div class="payment-timer-row">
+            <div class="timer-badge-wrap">
+                <div class="timer-badge">
+                    <span class="timer-label" data-i18n="timerLabel">付款倒计时</span>
+                    <span class="timer-text" id="timerDisplayQ">--:--:--</span>
+                </div>
+                <svg class="timer-ring" aria-hidden="true">
+                    <rect class="timer-ring-track" x="0.75" y="0.75" rx="7.25" ry="7.25" pathLength="100"/>
+                    <rect class="timer-ring-bar" x="0.75" y="0.75" rx="7.25" ry="7.25" pathLength="100"/>
+                </svg>
+            </div>
+        </div>
+        <div class="qr-wrapper" id="paymentQrQ">
+            <div id="qrcode"></div>
+        </div>
+        <div class="payment-fee-row qr-fee-row" id="paymentNoticeQ" hidden>
+            <div class="fee-notice">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm.75 10.5h-1.5v-5h1.5v5zm0-6.5h-1.5V3.5h1.5V5z"/>
+                </svg>
+                <span id="paymentNoticeTextQ"></span>
+            </div>
+        </div>
+        <div class="address-card">
+            <div class="address-label-row">
+                <span class="address-label" id="addressLabelQ" data-i18n="receivingAddress">收款地址</span>
+                <span class="copy-trigger" id="copyAddressBtn" data-i18n="[title]copyAddressTitle" title="复制地址">
+                    <span class="copy-trigger-label" id="copyAddressHint" hidden>复制UID</span>
+                    <span class="copy-trigger-icon" id="copyAddressIcon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                    </span>
+                </span>
+            </div>
+            <div class="address-value" id="walletAddress">--</div>
+        </div>
+        <button class="reselect-btn" id="reselectPaymentBtn" type="button" style="display:none;" data-i18n="reselectPayment">
+            选错了付款方式？返回重选
+        </button>
+    </div>
+    <div class="manual-tx-section" id="manualTxSection" hidden>
+        <button class="manual-tx-toggle" id="manualTxToggle" type="button" aria-expanded="false" aria-haspopup="dialog" aria-controls="manualTxModal" data-i18n="manualTxOpen">已转账但未到账？点击提交TxID链上验证</button>
+    </div>
+</div>
+<div id="cmusToast" class="toast"></div>
+<div id="manualTxModal" class="modal-overlay manual-tx-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="manualTxTitle">
+    <div class="manual-tx-dialog">
+        <div class="manual-tx-dialog-header">
+            <h2 class="manual-tx-dialog-title" id="manualTxTitle" data-i18n="manualTxTitle">提交交易哈希</h2>
+            <button class="manual-tx-close" id="manualTxClose" type="button" aria-label="关闭" data-i18n="[aria-label]manualTxClose">&times;</button>
+        </div>
+        <form class="manual-tx-form" id="manualTxForm">
+            <label class="manual-tx-label" for="manualTxInput" data-i18n="manualTxLabel">交易哈希 (TxID)</label>
+            <input class="manual-tx-input" id="manualTxInput" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="请输入交易哈希" aria-label="交易哈希" data-i18n="manualTxPlaceholder">
+            <p class="manual-tx-message" id="manualTxMessage" role="status" aria-live="polite"></p>
+            <div class="manual-tx-actions">
+                <button class="manual-tx-cancel" id="manualTxCancel" type="button" data-i18n="manualTxCancel">取消</button>
+                <button class="manual-tx-submit" id="manualTxSubmit" type="submit" data-i18n="manualTxSubmit">提交验证</button>
+            </div>
+        </form>
+    </div>
+</div>
+<div id="successModal" class="modal-overlay" style="display:none;">
+    <div class="modal-card">
+        <div class="modal-body">
+            <div class="success-icon-wrap">
+                <svg class="success-checkmark" viewBox="0 0 52 52">
+                    <circle class="success-checkmark-circle" cx="26" cy="26" r="25" fill="none"/>
+                    <path class="success-checkmark-check" fill="none" d="M14 27 l8 8 l16-16"/>
+                </svg>
+            </div>
+            <h2 class="modal-title" data-i18n="paymentSuccess">支付成功！</h2>
+            <p class="modal-subtitle" data-i18n="paymentSuccessSubtitle">您的付款已确认，交易已完成</p>
+            <div id="txHashSection" class="tx-hash-card" style="display:none;">
+                <div class="tx-hash-label">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="2" y1="12" x2="22" y2="12"/>
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                    </svg>
+                    <span data-i18n="onChainDetails">链上详情</span>
+                </div>
+                <a id="txHashLink" href="#" target="_blank" class="tx-hash-value" style="text-decoration:none;">
+                    <span class="tx-hash-text" id="txHashDisplayText"></span>
+                    <svg class="tx-copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="7" y1="17" x2="17" y2="7"/>
+                        <polyline points="7 7 17 7 17 17"/>
+                    </svg>
+                </a>
+            </div>
+            <a href="#" id="returnBtn" class="return-btn" data-i18n="returnBtn">返回商户平台</a>
+        </div>
+    </div>
+</div>
+<div id="confirmingModal" class="modal-overlay" style="display:none;">
+    <div class="modal-card">
+        <div class="modal-body">
+            <div class="confirming-spinner"></div>
+            <h2 class="modal-title" data-i18n="confirmingTitle">交易确认中</h2>
+            <p class="modal-subtitle" data-i18n="confirmingSubtitle">检测到付款，区块链网络确认中...</p>
+            <p class="confirming-note" data-i18n="confirmingNote">预计确认时间：1-3 分钟</p>
+        </div>
+    </div>
+</div>
+</body>
+</html>

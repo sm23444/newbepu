@@ -1,0 +1,18 @@
+services:
+  bepusdt-exchange:
+    build:
+      context: .
+      dockerfile: dockerfile
+    container_name: bepusdt-exchange
+    restart: unless-stopped
+    ports:
+      - "44400:8080"
+    env_file:
+      - .env
+    environment:
+      LISTEN: ":8080"
+      SQLITE: "/var/lib/bepusdt/sqlite.db"
+      LOG: "/var/log/bepusdt/"
+    volumes:
+      - ./data:/var/lib/bepusdt
+      - ./log:/var/log/bepusdt

@@ -1,0 +1,15 @@
+.git
+.gitignore
+.dockerignore
+.env
+bepusdt.exe
+*.log
+tmp
+web/node_modules
+web/dist
+data/
+log/
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.bak

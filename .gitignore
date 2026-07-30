@@ -1,0 +1,20 @@
+tmp
+.air.toml
+.DS_Store
+.env
+!web/.env
+.idea
+conf.toml
+# Added by goreleaser init:
+dist/
+static/web
+static/secure
+*.log
+/data/
+/log/
+/bepusdt
+/bepusdt.exe
+*.db
+*.sqlite
+*.sqlite3
+*.bak

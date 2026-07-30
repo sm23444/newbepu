@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>BEpusdt - 安全初始化</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            min-height: 100%;
+        }
+
+        body {
+            min-height: 100vh;
+            min-height: 100dvh;
+            display: grid;
+            place-items: center;
+            padding: 24px 16px;
+            color: #1f2933;
+            background: #eef2f1;
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        }
+
+        .install-panel {
+            width: min(100%, 520px);
+            overflow: hidden;
+            background: #ffffff;
+            border: 1px solid #cfd8d5;
+            border-radius: 8px;
+            box-shadow: 0 12px 28px rgba(31, 41, 51, 0.12);
+        }
+
+        .panel-header {
+            padding: 22px 24px 18px;
+            color: #ffffff;
+            background: #176b54;
+        }
+
+        .panel-header h1 {
+            margin: 0;
+            font-size: 24px;
+            line-height: 1.25;
+            letter-spacing: 0;
+        }
+
+        .panel-header p {
+            margin: 7px 0 0;
+            color: #d9eee7;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .panel-body {
+            padding: 24px;
+        }
+
+        .notice {
+            margin: 0 0 20px;
+            padding: 12px 14px;
+            color: #34443e;
+            background: #edf7f3;
+            border-left: 3px solid #2f8f70;
+            font-size: 14px;
+            line-height: 1.55;
+        }
+
+        .error {
+            margin: 0 0 18px;
+            padding: 10px 12px;
+            color: #9b1c1c;
+            background: #fff1f1;
+            border: 1px solid #f2b8b8;
+            border-radius: 4px;
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        .field {
+            margin-bottom: 17px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 7px;
+            color: #263a33;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        input {
+            width: 100%;
+            min-height: 42px;
+            padding: 9px 11px;
+            color: #17211e;
+            background: #ffffff;
+            border: 1px solid #aebdb8;
+            border-radius: 4px;
+            outline: none;
+            font: inherit;
+            letter-spacing: 0;
+        }
+
+        input:focus {
+            border-color: #176b54;
+            box-shadow: 0 0 0 3px rgba(23, 107, 84, 0.14);
+        }
+
+        .hint {
+            display: block;
+            margin-top: 6px;
+            color: #5f6f69;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .submit-button {
+            width: 100%;
+            min-height: 44px;
+            margin-top: 3px;
+            padding: 10px 16px;
+            color: #ffffff;
+            background: #176b54;
+            border: 0;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 0;
+        }
+
+        .submit-button:hover {
+            background: #115742;
+        }
+
+        .submit-button:focus-visible {
+            outline: 3px solid rgba(23, 107, 84, 0.28);
+            outline-offset: 2px;
+        }
+
+        .security-note {
+            margin: 18px 0 0;
+            color: #5f6f69;
+            font-size: 12px;
+            line-height: 1.5;
+            text-align: center;
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 12px;
+            }
+
+            .panel-header,
+            .panel-body {
+                padding-left: 18px;
+                padding-right: 18px;
+            }
+
+            .panel-header h1 {
+                font-size: 21px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main class="install-panel">
+        <header class="panel-header">
+            <h1>BEpusdt</h1>
+            <p>安全初始化</p>
+        </header>
+
+        <section class="panel-body">
+            <p class="notice">
+                从服务控制台或 Docker 日志取得一次性安装令牌，然后设置管理员账号和密码。
+            </p>
+
+            {{ if .error }}
+            <div class="error" role="alert">{{ .error }}</div>
+            {{ end }}
+
+            <form action="/install" method="post" autocomplete="off">
+                <div class="field">
+                    <label for="install_token">一次性安装令牌</label>
+                    <input id="install_token" name="install_token" type="password" maxlength="128" required
+                        autocomplete="new-password" spellcheck="false" autofocus>
+                    <span class="hint">令牌只在当前启动周期有效。</span>
+                </div>
+
+                <div class="field">
+                    <label for="username">管理员账号</label>
+                    <input id="username" name="username" type="text" value="{{ .username }}" maxlength="32" required
+                        autocomplete="username" spellcheck="false">
+                </div>
+
+                <div class="field">
+                    <label for="password">管理员密码</label>
+                    <input id="password" name="password" type="password" minlength="6" maxlength="72" required
+                        autocomplete="new-password">
+                </div>
+
+                <div class="field">
+                    <label for="confirm_password">确认管理员密码</label>
+                    <input id="confirm_password" name="confirm_password" type="password" minlength="6" maxlength="72"
+                        required autocomplete="new-password">
+                </div>
+
+                <button class="submit-button" type="submit">完成初始化</button>
+            </form>
+
+            <p class="security-note">验证成功后安装令牌立即失效，系统才会写入已安装状态。</p>
+        </section>
+    </main>
+</body>
+
+</html>
