@@ -35,12 +35,18 @@ jobs:
             *) echo "::error::Release tag must start with v"; exit 1 ;;
           esac
 
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ "$RELEASE_TAG" != "v${version}" ]]; then
+            echo "::error::Release tag ${RELEASE_TAG} does not match VERSION ${version}"
+            exit 1
+          fi
+
           tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
           if [[ -z "$tag_commit" || "$tag_commit" != "$(git rev-parse HEAD)" ]]; then
             echo "::error::Checked-out commit does not match tag $RELEASE_TAG"
             exit 1
           fi
-          echo "VERSION_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          echo "VERSION_TAG=$version" >> "$GITHUB_ENV"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4

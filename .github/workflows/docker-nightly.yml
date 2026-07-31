@@ -29,9 +29,10 @@ jobs:
       - name: Set image version
         shell: bash
         run: |
+          version="$(tr -d '[:space:]' < VERSION)"
           short_sha="$(git rev-parse --short=7 HEAD)"
           build_date="$(date +'%Y%m%d')"
-          echo "APP_VERSION=nightly-${build_date}-${short_sha}" >> "$GITHUB_ENV"
+          echo "APP_VERSION=${version}-nightly.${build_date}+${short_sha}" >> "$GITHUB_ENV"
           echo "NIGHTLY_TAG=nightly-${build_date}-${short_sha}" >> "$GITHUB_ENV"
 
       - name: Set up QEMU

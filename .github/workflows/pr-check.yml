@@ -78,7 +78,10 @@ jobs:
 
       - name: Set Docker image version
         shell: bash
-        run: echo "VERSION_TAG=ci-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          short_sha="$(git rev-parse --short=7 HEAD)"
+          echo "VERSION_TAG=ci-${version}-${short_sha}" >> "$GITHUB_ENV"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
