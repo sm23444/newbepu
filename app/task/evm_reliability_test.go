@@ -121,6 +121,85 @@ func TestBuildEVMLogRequestFiltersByNetworkContracts(t *testing.T) {
 	}
 }
 
+func TestGetBlockByNumberSkipsZeroAmountTransferWithoutRetry(t *testing.T) {
+	setupEVMReliabilityTestDB(t)
+	setEVMTestTaskLogger(t)
+
+	contracts := model.GetNetworkContractAddresses(conf.Polygon)
+	if len(contracts) == 0 {
+		t.Fatal("Polygon has no registered token contracts")
+	}
+	contract := contracts[0]
+	fromTopic := "0x0000000000000000000000001111111111111111111111111111111111111111"
+	recvTopic := "0x0000000000000000000000002222222222222222222222222222222222222222"
+	zeroAmount := "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var request any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode RPC request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		switch request.(type) {
+		case []any:
+			_, _ = fmt.Fprint(w, `[{"jsonrpc":"2.0","result":{"number":"0xa","timestamp":"0x64","transactions":[]},"id":10}]`)
+		case map[string]any:
+			_, _ = fmt.Fprintf(
+				w,
+				`{"jsonrpc":"2.0","result":[{"address":%q,"topics":[%q,%q,%q],"data":%q,"blockNumber":"0xa","transactionHash":%q,"removed":false}],"id":1}`,
+				contract,
+				evmTransferEvent,
+				fromTopic,
+				recvTopic,
+				zeroAmount,
+				evmTestTxHash,
+			)
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	setEVMReliabilityTestConf(t, model.RpcEndpointPolygon, server.URL)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queue := chanx.NewUnboundedChan[evmBlock](ctx, 1)
+	retries := 0
+	e := evm{
+		Network:        conf.Polygon,
+		Client:         server.Client(),
+		blockScanQueue: queue,
+		blockRetryAfter: func(_ time.Duration, retry func()) {
+			retries++
+			retry()
+		},
+	}
+
+	transfers, err := e.parseEventTransfer(
+		evmBlock{From: 10, To: 10},
+		map[int64]time.Time{10: time.Unix(100, 0)},
+	)
+	if err != nil {
+		t.Fatalf("parse zero-amount transfer: %v", err)
+	}
+	if len(transfers) != 0 {
+		t.Fatalf("zero-amount transfer produced %d transfers", len(transfers))
+	}
+
+	e.getBlockByNumber(evmBlock{From: 10, To: 10})
+
+	if retries != 0 {
+		t.Fatalf("zero-amount transfer triggered %d block retries", retries)
+	}
+	if queue.Len() != 0 {
+		t.Fatalf("zero-amount transfer requeued %d block ranges", queue.Len())
+	}
+}
+
 func TestRetryBlockBacksOffAndSplitsWideRanges(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

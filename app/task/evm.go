@@ -137,7 +137,7 @@ func parseEVMAmount(value string) (*big.Int, error) {
 	}
 
 	amount, ok := new(big.Int).SetString(value[2:], 16)
-	if !ok || amount.Sign() <= 0 {
+	if !ok || amount.Sign() < 0 {
 		return nil, fmt.Errorf("invalid EVM amount %q", value)
 	}
 
@@ -630,6 +630,9 @@ func (e *evm) parseEventTransfer(b evmBlock, timestamp map[int64]time.Time) ([]t
 		amount, err := parseEVMAmount(itm.Get("data").String())
 		if err != nil {
 			return transfers, err
+		}
+		if amount.Sign() == 0 {
+			continue
 		}
 		blockNumber, err := parseEVMQuantity(itm.Get("blockNumber").String())
 		if err != nil {
