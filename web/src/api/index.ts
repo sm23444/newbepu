@@ -13,6 +13,23 @@ declare module "axios" {
 // 创建axios实例
 const service = axios.create();
 
+const expireSession = () => {
+  const userStore = useUserInfoStore(pinia);
+  const hadSession = Boolean(userStore.token);
+
+  userStore.logOut();
+  localStorage.removeItem("user-info");
+
+  if (hadSession) {
+    Message.error("登录已过期，请重新登录");
+  }
+
+  if (window.location.hash !== "#/login") {
+    const basePath = window.location.pathname.split("#")[0];
+    window.location.href = `${basePath}#/login`;
+  }
+};
+
 // 请求拦截器
 service.interceptors.request.use(
   function (config: any) {
@@ -51,16 +68,7 @@ service.interceptors.response.use(
     }
 
     if (res.code == 403) {
-      // 清除 localStorage
-      localStorage.removeItem("user-info");
-
-      // 清除 Pinia store 中的 token 和用户信息
-      const userStore = useUserInfoStore(pinia);
-      userStore.logOut();
-
-      // 跳转到登录页（保留当前路径前缀，如 /admin）
-      const basePath = window.location.pathname.split("#")[0];
-      window.location.href = `${basePath}#/login`;
+      expireSession();
 
       return Promise.reject(res);
     }
@@ -82,14 +90,7 @@ service.interceptors.response.use(
     // 处理 HTTP 错误状态码
     if (error.response) {
       if (error.response.status === 403) {
-        localStorage.removeItem("user-info");
-        const userStore = useUserInfoStore(pinia);
-        userStore.logOut();
-
-        Message.error("登录已过期，请重新登录");
-
-        const basePath = window.location.pathname.split("#")[0];
-        window.location.href = `${basePath}#/login`;
+        expireSession();
 
         return Promise.reject(error);
       }

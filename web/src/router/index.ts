@@ -63,11 +63,16 @@ router.beforeEach(async (to: any, _: any, next: any) => {
   // 判断路由是否获取，先获取账号信息和路由信息，添加路由后再跳转(页面刷新时触发)
   // 解决刷新页面404的问题
   if (!routeTree.value.length) {
-    const routeStore = useRouteConfigStore(pinia);
-    // 获取账号信息
-    await store.setAccount();
-    // 获取路由信息
-    await routeStore.initSetRouter();
+    try {
+      // 获取账号信息
+      await store.setAccount();
+      // 获取路由信息
+      await routeStore.initSetRouter();
+    } catch (error) {
+      // 会话过期时，响应拦截器已清空 token；必须结束本次初始导航，否则页面会停在空白状态
+      if (!token.value) return next("/login");
+      throw error;
+    }
 
     // 普通路由需要添加query
     // 动态路由会自动匹配params
@@ -93,7 +98,10 @@ router.onError((error: any) => {
 });
 
 // 路由加载后
-router.afterEach(() => {
+router.afterEach((to: any) => {
+  if (to.path === "/login") {
+    void useRouteConfigStore(pinia).resetRoute();
+  }
   NProgress.done();
 });
 
