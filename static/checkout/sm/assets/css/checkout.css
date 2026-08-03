@@ -462,6 +462,7 @@ body {
     font-size: 14px;
 }
 .qr-wrapper {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -473,6 +474,35 @@ body {
     background: #fff;
 }
 .qr-wrapper canvas { display: block; }
+.qr-payment-logo {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 42px;
+    height: 42px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #fff;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+.qr-token-logo {
+    width: 42px;
+    height: 42px;
+    object-fit: contain;
+}
+.qr-network-logo {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    width: 15px;
+    height: 15px;
+    padding: 1px;
+    border-radius: 50%;
+    background: #fff;
+    object-fit: contain;
+}
 
 .qr-fee-row {
     width: 100%;
@@ -501,6 +531,10 @@ body {
     color: var(--color-text-primary);
     word-break: break-all;
     line-height: 1.5;
+}
+.address-emphasis {
+    color: var(--color-accent);
+    font-weight: 800;
 }
 .reselect-btn {
     width: 100%;

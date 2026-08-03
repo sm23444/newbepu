@@ -137,6 +137,44 @@
         return WEB3 + '/network/' + key + '.svg';
     }
 
+    function updateQrPaymentLogo(currencyValue, networkValue) {
+        var badge = document.getElementById('qrPaymentLogo');
+        var tokenLogo = document.getElementById('qrTokenLogo');
+        var networkLogo = document.getElementById('qrNetworkLogo');
+        if (!badge || !tokenLogo || !networkLogo) return;
+
+        var currency = currencyValue == null ? '' : String(currencyValue).trim().toUpperCase();
+        var network = networkValue == null ? '' : String(networkValue).trim().toLowerCase();
+        badge.style.display = 'none';
+        tokenLogo.removeAttribute('src');
+        networkLogo.style.display = 'none';
+        networkLogo.removeAttribute('src');
+        tokenLogo.onload = null;
+        tokenLogo.onerror = null;
+        networkLogo.onload = null;
+        networkLogo.onerror = null;
+        if (!currency) return;
+
+        tokenLogo.onerror = function () {
+            badge.style.display = 'none';
+            tokenLogo.removeAttribute('src');
+        };
+        tokenLogo.onload = function () {
+            badge.style.display = 'flex';
+        };
+        tokenLogo.src = tokenIcon(currency);
+
+        if (!network) return;
+        networkLogo.onerror = function () {
+            networkLogo.style.display = 'none';
+            networkLogo.removeAttribute('src');
+        };
+        networkLogo.onload = function () {
+            networkLogo.style.display = 'block';
+        };
+        networkLogo.src = netIcon(network);
+    }
+
     function networkName(network) {
         var names = {
             arbitrum: 'ARBITRUM',
@@ -636,6 +674,7 @@
         applyI18n: applyI18n,
         t: t,
         safeHttpsUrl: safeHttpsUrl,
+        updateQrPaymentLogo: updateQrPaymentLogo,
         showCanceled: showCanceled,
         switchLang: switchLang
     };
@@ -652,6 +691,34 @@
             return window.Payment.safeHttpsUrl(value, fallback);
         }
         return fallback || '';
+    }
+
+    function renderWalletAddress(value) {
+        var el = document.getElementById('walletAddress');
+        if (!el) return;
+
+        var address = value == null || value === '' ? '--' : String(value);
+        el.textContent = '';
+        if (address === '--') {
+            el.textContent = address;
+            return;
+        }
+
+        function appendPart(text, emphasized) {
+            var part = document.createElement('span');
+            part.textContent = text;
+            if (emphasized) part.className = 'address-emphasis';
+            el.appendChild(part);
+        }
+
+        if (address.length <= 10) {
+            appendPart(address, true);
+            return;
+        }
+
+        appendPart(address.slice(0, 4), true);
+        appendPart(address.slice(4, -6), false);
+        appendPart(address.slice(-6), true);
     }
 
     function paymentNotice(network) {
@@ -850,7 +917,12 @@
             paymentNoticeQ.hidden = !netName;
         }
         document.getElementById('orderIdQ').textContent = d.order_id || '--';
-        document.getElementById('walletAddress').textContent = d.token || d.address || '--';
+        var paymentAddress = d.token || d.address || '';
+        if (isExchangePayment) {
+            document.getElementById('walletAddress').textContent = paymentAddress || '--';
+        } else {
+            renderWalletAddress(paymentAddress);
+        }
         var addr = document.getElementById('addressLabelQ');
         if (addr) {
             if (provider === 'okx') addr.textContent = '欧易UID';
@@ -873,7 +945,10 @@
         if (paymentQrQ) paymentQrQ.style.display = isExchangePayment ? 'none' : '';
         $('#qrcode').empty();
         if (!isExchangePayment) {
-            $('#qrcode').qrcode({ text: d.token || d.address || '', width: 170, height: 170 });
+            $('#qrcode').qrcode({ text: paymentAddress, width: 170, height: 170 });
+        }
+        if (window.Payment && typeof Payment.updateQrPaymentLogo === 'function') {
+            Payment.updateQrPaymentLogo(isExchangePayment ? '' : currency, isExchangePayment ? '' : netKey);
         }
         updateReselectButton();
         bindManualTxSubmit(d);
