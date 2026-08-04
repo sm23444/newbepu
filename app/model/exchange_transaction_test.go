@@ -91,7 +91,7 @@ func TestPendingExchangeTransactionsRotatesPastBatchLimit(t *testing.T) {
 		t.Fatalf("create transactions: %v", err)
 	}
 
-	pending, cursor, err := PendingExchangeTransactions("okx", start.Add(-time.Second), 0, 500)
+	pending, cursor, err := PendingExchangeTransactions("okx", UsdtOKX, start.Add(-time.Second), 0, 500)
 	if err != nil {
 		t.Fatalf("query pending transactions: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestPendingExchangeTransactionsRotatesPastBatchLimit(t *testing.T) {
 		t.Fatal("first full page did not advance the pending cursor")
 	}
 
-	next, cursor, err := PendingExchangeTransactions("okx", start.Add(-time.Second), cursor, 500)
+	next, cursor, err := PendingExchangeTransactions("okx", UsdtOKX, start.Add(-time.Second), cursor, 500)
 	if err != nil {
 		t.Fatalf("query second pending page: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestPendingExchangeTransactionsBatchMarksLinkedOrders(t *testing.T) {
 		t.Fatalf("create transactions: %v", err)
 	}
 
-	pending, _, err := PendingExchangeTransactions("okx", now.Add(-time.Second), 0, 10)
+	pending, _, err := PendingExchangeTransactions("okx", UsdtOKX, now.Add(-time.Second), 0, 10)
 	if err != nil {
 		t.Fatalf("query pending transactions: %v", err)
 	}
@@ -164,6 +164,38 @@ func TestPendingExchangeTransactionsBatchMarksLinkedOrders(t *testing.T) {
 	}
 	if stored[2].Status != ExchangeTransactionPending || stored[2].OrderID != 0 {
 		t.Fatalf("unmatched transaction status/order=%d/%d", stored[2].Status, stored[2].OrderID)
+	}
+}
+
+func TestPendingExchangeTransactionsIsolatesTradeTypes(t *testing.T) {
+	db := newExchangeTransactionTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	usdt := newExchangeTestTransaction(now, "bill-usdt")
+	usdc := newExchangeTestTransaction(now.Add(time.Second), "bill-usdc")
+	usdc.TradeType = UsdcOKX
+	usdc.Asset = "USDC"
+	rows := []ExchangeTransaction{usdt, usdc}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("create transactions: %v", err)
+	}
+
+	pendingUSDT, cursor, err := PendingExchangeTransactions("okx", UsdtOKX, now.Add(-time.Second), 0, 10)
+	if err != nil {
+		t.Fatalf("query USDT transactions: %v", err)
+	}
+	if len(pendingUSDT) != 1 || pendingUSDT[0].TransactionID != "bill-usdt" {
+		t.Fatalf("USDT query returned %#v", pendingUSDT)
+	}
+	if cursor != 0 {
+		t.Fatalf("USDT cursor = %d, want 0 for its final page", cursor)
+	}
+
+	pendingUSDC, _, err := PendingExchangeTransactions("okx", UsdcOKX, now.Add(-time.Second), 0, 10)
+	if err != nil {
+		t.Fatalf("query USDC transactions: %v", err)
+	}
+	if len(pendingUSDC) != 1 || pendingUSDC[0].TransactionID != "bill-usdc" {
+		t.Fatalf("USDC query returned %#v", pendingUSDC)
 	}
 }
 

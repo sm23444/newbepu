@@ -78,7 +78,7 @@ func newPendingReselectionOrder(id string) Order {
 }
 
 func TestExchangePaymentCannotBeReselected(t *testing.T) {
-	for _, tradeType := range []TradeType{UsdtBinance, UsdtOKX} {
+	for _, tradeType := range []TradeType{UsdtBinance, UsdtOKX, UsdcBinance, UsdcOKX} {
 		order := newPendingReselectionOrder(string(tradeType))
 		order.TradeType = tradeType
 		if order.CanReselectPayment() {

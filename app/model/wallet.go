@@ -48,7 +48,7 @@ func (wa *Wallet) Validate() error {
 	wa.MatchAddr = wa.Address
 
 	switch tradeType {
-	case UsdtBinance, UsdtOKX:
+	case UsdtBinance, UsdtOKX, UsdcBinance, UsdcOKX:
 		if len(wa.Address) > 32 || !exchangeUIDPattern.MatchString(wa.Address) {
 			return errors.New("exchange UID must contain only digits and cannot start with zero")
 		}
@@ -172,10 +172,10 @@ func GetConfiguredExchangeUID(t TradeType) string {
 	var confKey ConfKey
 	var envKey string
 	switch t {
-	case UsdtBinance:
+	case UsdtBinance, UsdcBinance:
 		confKey = ExchangeBinanceUID
 		envKey = "BEPUSDT_BINANCE_UID"
-	case UsdtOKX:
+	case UsdtOKX, UsdcOKX:
 		confKey = ExchangeOKXUID
 		envKey = "BEPUSDT_OKX_UID"
 	default:

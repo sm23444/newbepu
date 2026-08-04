@@ -67,7 +67,7 @@ func TestNotifyFailTextUsesClaimedAttemptNumber(t *testing.T) {
 }
 
 func TestOrderTransactionReplyMarkupOmitsExchangeButton(t *testing.T) {
-	for _, tradeType := range []model.TradeType{model.UsdtOKX, model.UsdtBinance} {
+	for _, tradeType := range []model.TradeType{model.UsdtOKX, model.UsdtBinance, model.UsdcOKX, model.UsdcBinance} {
 		order := model.Order{TradeType: tradeType, RefHash: "exchange-transaction-id"}
 		if markup := orderTransactionReplyMarkup(order, "details"); markup != nil {
 			t.Fatalf("trade type %s unexpectedly produced reply markup: %+v", tradeType, markup)

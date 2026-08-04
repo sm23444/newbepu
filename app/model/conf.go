@@ -40,6 +40,7 @@ var defaultConf = map[ConfKey]string{
 	AtomETH:                 "0.000001",
 	AtomGRAM:                "0.01",
 	AtomExchangeUSDT:        "0.0001",
+	AtomExchangeUSDC:        "0.0001",
 	MonitorMinAmount:        "0.01",
 	PaymentMinAmount:        "0.01",
 	PaymentMaxAmount:        "99999",

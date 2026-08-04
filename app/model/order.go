@@ -56,6 +56,8 @@ const (
 	UsdtTon      TradeType = "usdt.ton"
 	UsdtBinance  TradeType = "usdt.binance"
 	UsdtOKX      TradeType = "usdt.okx"
+	UsdcBinance  TradeType = "usdc.binance"
+	UsdcOKX      TradeType = "usdc.okx"
 )
 
 const (
@@ -612,14 +614,14 @@ func GetAtomicity(t TradeType) (decimal.Decimal, int32) {
 }
 
 func IsExchangeTradeType(t TradeType) bool {
-	return t == UsdtBinance || t == UsdtOKX
+	return t == UsdtBinance || t == UsdtOKX || t == UsdcBinance || t == UsdcOKX
 }
 
 func IsExchangeProviderEnabled(t TradeType) bool {
 	switch t {
-	case UsdtBinance:
+	case UsdtBinance, UsdcBinance:
 		return GetC(ExchangeBinanceEnabled) != "0"
-	case UsdtOKX:
+	case UsdtOKX, UsdcOKX:
 		return GetC(ExchangeOKXEnabled) != "0"
 	default:
 		return true
@@ -635,9 +637,9 @@ func paymentKind(t TradeType) string {
 
 func exchangeProvider(t TradeType) string {
 	switch t {
-	case UsdtBinance:
+	case UsdtBinance, UsdcBinance:
 		return "binance"
-	case UsdtOKX:
+	case UsdtOKX, UsdcOKX:
 		return "okx"
 	default:
 		return ""
@@ -646,9 +648,9 @@ func exchangeProvider(t TradeType) string {
 
 func receiverLabel(t TradeType) string {
 	switch t {
-	case UsdtBinance:
+	case UsdtBinance, UsdcBinance:
 		return "币安ID"
-	case UsdtOKX:
+	case UsdtOKX, UsdcOKX:
 		return "欧易UID"
 	default:
 		return "收款地址"

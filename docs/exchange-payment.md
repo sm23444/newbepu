@@ -4,10 +4,11 @@
 
 ## 支持方式
 
-- Binance：读取 Binance Pay 交易历史，筛选收款 UID 和 USDT。
-- OKX：读取资金账户账单，筛选 `type=72` 的 USDT 入账。
+- Binance：读取 Binance Pay 交易历史，按收款 UID 分别筛选 USDT 和 USDC。
+- OKX：读取资金账户账单，按币种分别筛选 `type=1` 和 `type=72` 的 USDT、USDC 入账。
 - 每笔交易以交易所返回的唯一交易 ID 去重。
-- 订单匹配同时校验交易类型、收款 UID、USDT 数量和订单时间窗口。
+- 订单匹配同时校验交易类型、收款 UID、对应币种数量和订单时间窗口。
+- USDT 与 USDC 使用独立交易类型、金额增量和扫描游标，不会跨币种匹配。
 
 ## API 权限
 
@@ -82,5 +83,5 @@ POST /api/exchange/test   {"provider":"binance"|"okx"}
 - 配置查询接口只返回密钥是否已配置，不返回 API Key、Secret 或 Passphrase 明文。
 - 后台保存后轮询任务立即热重载，不需要重启容器。
 - 后台数据库配置优先于同名环境变量；未在后台填写的密钥仍可从 `.env` 读取。
-- 启用交易所后会自动创建对应 UID 的收款方式；同一交易所中与当前 API 账户 UID 不一致的钱包不会参与订单分配。
+- 启用交易所后会自动为 USDT、USDC 创建对应 UID 的收款方式；同一交易所中与当前 API 账户 UID 不一致的钱包不会参与订单分配。
 - 收银台会把交易所方式标记为 Binance Pay 或 OKX Pay，并显示收款 UID 与唯一应付金额；链上方式继续显示地址二维码。

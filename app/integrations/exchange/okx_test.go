@@ -111,6 +111,41 @@ func TestOKXListIncomingAcceptsCurrentAndLegacyDepositBillTypes(t *testing.T) {
 	}
 }
 
+func TestOKXListIncomingQueriesUSDC(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if got := request.URL.Query().Get("ccy"); got != "USDC" {
+			t.Errorf("OKX ccy = %q, want USDC", got)
+		}
+		bill := testOKXBill("bill-usdc-"+request.URL.Query().Get("type"), now.UnixMilli())
+		bill.Currency = "USDC"
+		bill.Type = json.RawMessage(strconv.Quote(request.URL.Query().Get("type")))
+		_ = json.NewEncoder(writer).Encode(okxBillsResponse{Code: "0", Data: []okxBill{bill}})
+	}))
+	defer server.Close()
+
+	client, err := NewOKXClient(OKXConfig{
+		APIKey: "api-key", SecretKey: "secret-key", Passphrase: "passphrase",
+		AccountUID: "123456", APIURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("create OKX client: %v", err)
+	}
+	client.validated = true
+	transactions, err := client.ListIncoming(context.Background(), "usdc", now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("list incoming OKX USDC bills: %v", err)
+	}
+	if len(transactions) != 2 {
+		t.Fatalf("transaction count = %d, want 2", len(transactions))
+	}
+	for _, transaction := range transactions {
+		if transaction.Asset != "USDC" {
+			t.Fatalf("unexpected OKX asset: %+v", transaction)
+		}
+	}
+}
+
 func testOKXBill(id string, timestamp int64) okxBill {
 	return okxBill{
 		BalanceChange: "1.0000",

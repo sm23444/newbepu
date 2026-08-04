@@ -17,6 +17,7 @@ import (
 var (
 	exchangePoller *exchangeRuntime
 	exchangeMu     sync.RWMutex
+	exchangeAssets = []string{string(model.USDT), string(model.USDC)}
 )
 
 type exchangeRuntime struct {
@@ -86,6 +87,9 @@ func ReloadExchangePayments() error {
 		if err := model.EnsureExchangeWallet(model.UsdtBinance, config.Binance.ReceiverUID, "Binance Pay"); err != nil {
 			return err
 		}
+		if err := model.EnsureExchangeWallet(model.UsdcBinance, config.Binance.ReceiverUID, "Binance Pay USDC"); err != nil {
+			return err
+		}
 		clients = append(clients, client)
 	}
 	if config.OKX != nil {
@@ -94,6 +98,9 @@ func ReloadExchangePayments() error {
 			return err
 		}
 		if err := model.EnsureExchangeWallet(model.UsdtOKX, config.OKX.AccountUID, "OKX Pay"); err != nil {
+			return err
+		}
+		if err := model.EnsureExchangeWallet(model.UsdcOKX, config.OKX.AccountUID, "OKX Pay USDC"); err != nil {
 			return err
 		}
 		clients = append(clients, client)
@@ -109,7 +116,7 @@ func ReloadExchangePayments() error {
 	exchangePoller = &exchangeRuntime{
 		config:         config,
 		clients:        clients,
-		pendingCursors: make(map[string]int64, len(clients)),
+		pendingCursors: make(map[string]int64, len(clients)*len(exchangeAssets)),
 	}
 	exchangeMu.Unlock()
 	providers := make([]string, 0, len(clients))
@@ -127,7 +134,10 @@ func exchangePollingLoop(ctx context.Context) {
 	var nextPoll time.Time
 	poll := func(runtime *exchangeRuntime) {
 		for _, client := range runtime.clients {
-			runtime.pendingCursors[client.Provider()] = pollExchange(ctx, client, runtime.pendingCursors[client.Provider()])
+			for _, asset := range exchangeAssets {
+				key := exchangeCursorKey(client.Provider(), asset)
+				runtime.pendingCursors[key] = pollExchange(ctx, client, asset, runtime.pendingCursors[key])
+			}
 		}
 		if runtime.cleaned.IsZero() || time.Since(runtime.cleaned) >= time.Hour {
 			if err := model.DeleteExchangeTransactionsBefore(time.Now().Add(-7 * 24 * time.Hour)); err != nil {
@@ -186,24 +196,28 @@ func TestExchangePayment(ctx context.Context, provider string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	transactions, err := client.ListIncoming(ctx, "USDT", time.Now().Add(-24*time.Hour), time.Now())
-	if err != nil {
-		return 0, err
+	total := 0
+	for _, asset := range exchangeAssets {
+		transactions, err := client.ListIncoming(ctx, asset, time.Now().Add(-24*time.Hour), time.Now())
+		if err != nil {
+			return 0, fmt.Errorf("%s history check failed: %w", asset, err)
+		}
+		total += len(transactions)
 	}
-	return len(transactions), nil
+	return total, nil
 }
 
-func pollExchange(ctx context.Context, client exchange.Client, pendingCursor int64) int64 {
-	tradeType := exchangeTradeType(client.Provider())
+func pollExchange(ctx context.Context, client exchange.Client, asset string, pendingCursor int64) int64 {
+	tradeType := exchangeTradeType(client.Provider(), asset)
 	if tradeType == "" || !hasLookbackOrders([]model.TradeType{tradeType}) {
 		return pendingCursor
 	}
 
 	now := time.Now()
 	start := now.Add(model.GetLookbackHour())
-	transactions, err := client.ListIncoming(ctx, "USDT", start, now)
+	transactions, err := client.ListIncoming(ctx, asset, start, now)
 	if err != nil {
-		log.Task.Warn(client.Provider(), " exchange payment scan failed:", err)
+		log.Task.Warn(client.Provider(), " ", asset, " exchange payment scan failed:", err)
 		return pendingCursor
 	}
 	rows := make([]model.ExchangeTransaction, 0, len(transactions))
@@ -219,19 +233,19 @@ func pollExchange(ctx context.Context, client exchange.Client, pendingCursor int
 		})
 	}
 	if err := model.StoreExchangeTransactions(rows); err != nil {
-		log.Task.Warn(client.Provider(), " exchange transaction store failed:", err)
+		log.Task.Warn(client.Provider(), " ", asset, " exchange transaction store failed:", err)
 		return pendingCursor
 	}
-	pending, nextCursor, err := model.PendingExchangeTransactions(client.Provider(), start, pendingCursor, 500)
+	pending, nextCursor, err := model.PendingExchangeTransactions(client.Provider(), tradeType, start, pendingCursor, 500)
 	if err != nil {
-		log.Task.Warn(client.Provider(), " exchange pending transaction query failed:", err)
+		log.Task.Warn(client.Provider(), " ", asset, " exchange pending transaction query failed:", err)
 		return pendingCursor
 	}
 	transfers := make([]transfer, 0, len(pending))
 	for _, row := range pending {
 		amount, err := decimal.NewFromString(row.Amount)
 		if err != nil {
-			log.Task.Warn(client.Provider(), " exchange transaction has invalid amount:", err)
+			log.Task.Warn(client.Provider(), " ", asset, " exchange transaction has invalid amount:", err)
 			continue
 		}
 		transfers = append(transfers, transfer{
@@ -255,13 +269,23 @@ func pollExchange(ctx context.Context, client exchange.Client, pendingCursor int
 	return nextCursor
 }
 
-func exchangeTradeType(provider string) model.TradeType {
-	switch provider {
-	case "binance":
+func exchangeTradeType(provider, asset string) model.TradeType {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	asset = strings.ToUpper(strings.TrimSpace(asset))
+	switch provider + ":" + asset {
+	case "binance:USDT":
 		return model.UsdtBinance
-	case "okx":
+	case "binance:USDC":
+		return model.UsdcBinance
+	case "okx:USDT":
 		return model.UsdtOKX
+	case "okx:USDC":
+		return model.UsdcOKX
 	default:
 		return ""
 	}
+}
+
+func exchangeCursorKey(provider, asset string) string {
+	return strings.ToLower(strings.TrimSpace(provider)) + ":" + strings.ToUpper(strings.TrimSpace(asset))
 }

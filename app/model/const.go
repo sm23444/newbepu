@@ -46,6 +46,7 @@ const (
 	AtomETH          ConfKey = "atom_eth"
 	AtomGRAM         ConfKey = "atom_gram"
 	AtomExchangeUSDT ConfKey = "atom_exchange_usdt"
+	AtomExchangeUSDC ConfKey = "atom_exchange_usdc"
 
 	MonitorMinAmount    ConfKey = "monitor_min_amount" // 监控最小金额，低于此金额的入账不进行通知
 	PaymentMinAmount    ConfKey = "payment_min_amount"
