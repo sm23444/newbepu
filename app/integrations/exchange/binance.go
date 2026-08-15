@@ -122,25 +122,13 @@ func (c *BinanceClient) ListIncoming(ctx context.Context, asset string, start, e
 		if err != nil || receiverUID != c.config.ReceiverUID {
 			continue
 		}
-		funds := row.FundsDetail
-		if len(funds) == 0 && row.Amount != "" && row.Currency != "" {
-			funds = []binanceFund{{Amount: row.Amount, Currency: row.Currency}}
+		// Top-level fields describe the received transaction; fundsDetail only
+		// describes the assets used to fund a combination payment.
+		if strings.ToUpper(strings.TrimSpace(row.Currency)) != asset {
+			continue
 		}
-		var amount decimal.Decimal
-		found := false
-		for _, fund := range funds {
-			if strings.ToUpper(fund.Currency) != asset {
-				continue
-			}
-			parsed, err := decimal.NewFromString(fund.Amount)
-			if err != nil || !parsed.IsPositive() {
-				continue
-			}
-			amount = parsed
-			found = true
-			break
-		}
-		if !found {
+		amount, err := decimal.NewFromString(strings.TrimSpace(row.Amount))
+		if err != nil || !amount.IsPositive() {
 			continue
 		}
 		timestamp, err := scalarInt64(row.TransactionTime)

@@ -31,44 +31,52 @@ var supportCrypto = map[Crypto]CoinId{
 // TradeType 交易类型，当下类型开始增多，现在这里统一管理、尽量收缩配置项
 var registry = map[TradeType]TradeTypeConf{
 	UsdtBinance: {
-		Alias:        "USDT / 币安交易所",
-		NetworkName:  "币安交易所",
-		Network:      conf.Binance,
-		Crypto:       USDT,
-		Decimal:      -4,
-		AmountRange:  usdGeneralRange,
-		AddrCaseSens: true,
-		AtomKey:      AtomExchangeUSDT,
+		Alias:            "USDT / 币安交易所",
+		NetworkName:      "币安交易所",
+		Network:          conf.Binance,
+		Crypto:           USDT,
+		Decimal:          -4,
+		AmountRange:      usdGeneralRange,
+		AddrCaseSens:     true,
+		AtomKey:          AtomExchangeUSDT,
+		ExchangeProvider: "binance",
+		ReceiverLabel:    "币安ID",
 	},
 	UsdtOKX: {
-		Alias:        "USDT / 欧易交易所",
-		NetworkName:  "欧易交易所",
-		Network:      conf.OKX,
-		Crypto:       USDT,
-		Decimal:      -4,
-		AmountRange:  usdGeneralRange,
-		AddrCaseSens: true,
-		AtomKey:      AtomExchangeUSDT,
+		Alias:            "USDT / 欧易交易所",
+		NetworkName:      "欧易交易所",
+		Network:          conf.OKX,
+		Crypto:           USDT,
+		Decimal:          -4,
+		AmountRange:      usdGeneralRange,
+		AddrCaseSens:     true,
+		AtomKey:          AtomExchangeUSDT,
+		ExchangeProvider: "okx",
+		ReceiverLabel:    "欧易UID",
 	},
 	UsdcBinance: {
-		Alias:        "USDC / 币安交易所",
-		NetworkName:  "币安交易所",
-		Network:      conf.Binance,
-		Crypto:       USDC,
-		Decimal:      -4,
-		AmountRange:  usdGeneralRange,
-		AddrCaseSens: true,
-		AtomKey:      AtomExchangeUSDC,
+		Alias:            "USDC / 币安交易所",
+		NetworkName:      "币安交易所",
+		Network:          conf.Binance,
+		Crypto:           USDC,
+		Decimal:          -4,
+		AmountRange:      usdGeneralRange,
+		AddrCaseSens:     true,
+		AtomKey:          AtomExchangeUSDC,
+		ExchangeProvider: "binance",
+		ReceiverLabel:    "币安ID",
 	},
 	UsdcOKX: {
-		Alias:        "USDC / 欧易交易所",
-		NetworkName:  "欧易交易所",
-		Network:      conf.OKX,
-		Crypto:       USDC,
-		Decimal:      -4,
-		AmountRange:  usdGeneralRange,
-		AddrCaseSens: true,
-		AtomKey:      AtomExchangeUSDC,
+		Alias:            "USDC / 欧易交易所",
+		NetworkName:      "欧易交易所",
+		Network:          conf.OKX,
+		Crypto:           USDC,
+		Decimal:          -4,
+		AmountRange:      usdGeneralRange,
+		AddrCaseSens:     true,
+		AtomKey:          AtomExchangeUSDC,
+		ExchangeProvider: "okx",
+		ReceiverLabel:    "欧易UID",
 	},
 	UsdtTon: {
 		Alias:        "USDT・Ton",
@@ -563,4 +571,34 @@ func GetTradeTypeByCurrencyAndNetwork(currency, network string) (TradeType, erro
 		}
 	}
 	return "", fmt.Errorf("no matching trade type found for currency %s on network %s", currency, network)
+}
+
+func GetExchangeTradeType(provider, asset string) TradeType {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	asset = strings.ToUpper(strings.TrimSpace(asset))
+	for tradeType, trade := range registry {
+		if trade.ExchangeProvider == provider && string(trade.Crypto) == asset {
+			return tradeType
+		}
+	}
+
+	return ""
+}
+
+func GetExchangeAssets() []string {
+	seen := make(map[Crypto]struct{})
+	assets := make([]string, 0)
+	for _, trade := range registry {
+		if trade.ExchangeProvider == "" {
+			continue
+		}
+		if _, exists := seen[trade.Crypto]; exists {
+			continue
+		}
+		seen[trade.Crypto] = struct{}{}
+		assets = append(assets, string(trade.Crypto))
+	}
+	sort.Strings(assets)
+
+	return assets
 }

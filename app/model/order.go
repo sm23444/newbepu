@@ -613,50 +613,6 @@ func GetAtomicity(t TradeType) (decimal.Decimal, int32) {
 	return atom, cast.ToInt32(math.Abs(float64(atom.Exponent())))
 }
 
-func IsExchangeTradeType(t TradeType) bool {
-	return t == UsdtBinance || t == UsdtOKX || t == UsdcBinance || t == UsdcOKX
-}
-
-func IsExchangeProviderEnabled(t TradeType) bool {
-	switch t {
-	case UsdtBinance, UsdcBinance:
-		return GetC(ExchangeBinanceEnabled) != "0"
-	case UsdtOKX, UsdcOKX:
-		return GetC(ExchangeOKXEnabled) != "0"
-	default:
-		return true
-	}
-}
-
-func paymentKind(t TradeType) string {
-	if IsExchangeTradeType(t) {
-		return "exchange"
-	}
-	return "chain"
-}
-
-func exchangeProvider(t TradeType) string {
-	switch t {
-	case UsdtBinance, UsdcBinance:
-		return "binance"
-	case UsdtOKX, UsdcOKX:
-		return "okx"
-	default:
-		return ""
-	}
-}
-
-func receiverLabel(t TradeType) string {
-	switch t {
-	case UsdtBinance, UsdcBinance:
-		return "币安ID"
-	case UsdtOKX, UsdcOKX:
-		return "欧易UID"
-	default:
-		return "收款地址"
-	}
-}
-
 func (o *Order) PaymentKind() string {
 	return paymentKind(o.TradeType)
 }

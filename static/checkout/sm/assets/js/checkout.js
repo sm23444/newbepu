@@ -137,6 +137,17 @@
         return WEB3 + '/network/' + key + '.svg';
     }
 
+    function splitWalletAddress(value) {
+        var address = value == null || value === '' ? '--' : String(value);
+        if (address === '--') return [{ text: address, emphasized: false }];
+        if (address.length <= 10) return [{ text: address, emphasized: true }];
+        return [
+            { text: address.slice(0, 4), emphasized: true },
+            { text: address.slice(4, -6), emphasized: false },
+            { text: address.slice(-6), emphasized: true }
+        ];
+    }
+
     function updateQrPaymentLogo(currencyValue, networkValue) {
         var badge = document.getElementById('qrPaymentLogo');
         var tokenLogo = document.getElementById('qrTokenLogo');
@@ -674,6 +685,7 @@
         applyI18n: applyI18n,
         t: t,
         safeHttpsUrl: safeHttpsUrl,
+        splitWalletAddress: splitWalletAddress,
         updateQrPaymentLogo: updateQrPaymentLogo,
         showCanceled: showCanceled,
         switchLang: switchLang
@@ -697,28 +709,16 @@
         var el = document.getElementById('walletAddress');
         if (!el) return;
 
-        var address = value == null || value === '' ? '--' : String(value);
         el.textContent = '';
-        if (address === '--') {
-            el.textContent = address;
-            return;
-        }
-
-        function appendPart(text, emphasized) {
+        var parts = window.Payment && typeof window.Payment.splitWalletAddress === 'function'
+            ? window.Payment.splitWalletAddress(value)
+            : [{ text: value == null || value === '' ? '--' : String(value), emphasized: false }];
+        parts.forEach(function (item) {
             var part = document.createElement('span');
-            part.textContent = text;
-            if (emphasized) part.className = 'address-emphasis';
+            part.textContent = item.text;
+            if (item.emphasized) part.className = 'address-emphasis';
             el.appendChild(part);
-        }
-
-        if (address.length <= 10) {
-            appendPart(address, true);
-            return;
-        }
-
-        appendPart(address.slice(0, 4), true);
-        appendPart(address.slice(4, -6), false);
-        appendPart(address.slice(-6), true);
+        });
     }
 
     function paymentNotice(network) {

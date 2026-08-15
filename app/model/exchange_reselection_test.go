@@ -54,6 +54,23 @@ func setExchangeReselectionTestConf(t *testing.T, key ConfKey, value string) {
 	})
 }
 
+func setConfiguredBinanceForTest(t *testing.T, uid string) {
+	t.Helper()
+	setExchangeReselectionTestConf(t, ExchangeBinanceEnabled, "1")
+	setExchangeReselectionTestConf(t, ExchangeBinanceAPIKey, "binance-key")
+	setExchangeReselectionTestConf(t, ExchangeBinanceSecretKey, "binance-secret")
+	setExchangeReselectionTestConf(t, ExchangeBinanceUID, uid)
+}
+
+func setConfiguredOKXForTest(t *testing.T, uid string) {
+	t.Helper()
+	setExchangeReselectionTestConf(t, ExchangeOKXEnabled, "1")
+	setExchangeReselectionTestConf(t, ExchangeOKXAPIKey, "okx-key")
+	setExchangeReselectionTestConf(t, ExchangeOKXSecretKey, "okx-secret")
+	setExchangeReselectionTestConf(t, ExchangeOKXPassphrase, "okx-passphrase")
+	setExchangeReselectionTestConf(t, ExchangeOKXUID, uid)
+}
+
 func newPendingReselectionOrder(id string) Order {
 	now := time.Now()
 	confirmedAt := now
@@ -134,8 +151,7 @@ func TestRebuildOrderRejectsStaleRequestAfterExchangeSelection(t *testing.T) {
 
 func TestConcurrentExchangeSelectionAllocatesUniqueAmounts(t *testing.T) {
 	db := newExchangeReselectionTestDB(t)
-	setExchangeReselectionTestConf(t, ExchangeBinanceEnabled, "1")
-	setExchangeReselectionTestConf(t, ExchangeBinanceUID, "123456")
+	setConfiguredBinanceForTest(t, "123456")
 	setExchangeReselectionTestConf(t, PaymentLookbackHour, "3")
 
 	if err := db.Create(&Conf{K: AtomExchangeUSDT, V: "0.0001"}).Error; err != nil {

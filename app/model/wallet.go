@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
@@ -159,32 +158,15 @@ func GetAvailableWallets(t TradeType) []Wallet {
 
 	query := Db.Where("trade_type = ? and status = ?", t, WaStatusEnable)
 	if IsExchangeTradeType(t) {
-		if uid := GetConfiguredExchangeUID(t); uid != "" {
-			query = query.Where("address = ?", uid)
+		if !IsExchangeProviderEnabled(t) {
+			return wallets
 		}
+		uid := GetConfiguredExchangeUID(t)
+		query = query.Where("address = ?", uid)
 	}
 	query.Find(&wallets)
 
 	return wallets
-}
-
-func GetConfiguredExchangeUID(t TradeType) string {
-	var confKey ConfKey
-	var envKey string
-	switch t {
-	case UsdtBinance, UsdcBinance:
-		confKey = ExchangeBinanceUID
-		envKey = "BEPUSDT_BINANCE_UID"
-	case UsdtOKX, UsdcOKX:
-		confKey = ExchangeOKXUID
-		envKey = "BEPUSDT_OKX_UID"
-	default:
-		return ""
-	}
-	if value := strings.TrimSpace(GetC(confKey)); value != "" {
-		return value
-	}
-	return strings.TrimSpace(os.Getenv(envKey))
 }
 
 // EnsureExchangeWallet creates the receiving method required by an enabled

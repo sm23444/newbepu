@@ -69,10 +69,8 @@ func TestExchangeOrderCheckoutMetadata(t *testing.T) {
 
 func TestUSDCCheckoutListsBinanceAndOKX(t *testing.T) {
 	db := newExchangeReselectionTestDB(t)
-	setExchangeReselectionTestConf(t, ExchangeBinanceEnabled, "1")
-	setExchangeReselectionTestConf(t, ExchangeBinanceUID, "123456")
-	setExchangeReselectionTestConf(t, ExchangeOKXEnabled, "1")
-	setExchangeReselectionTestConf(t, ExchangeOKXUID, "654321")
+	setConfiguredBinanceForTest(t, "123456")
+	setConfiguredOKXForTest(t, "654321")
 
 	if err := db.Create(&Conf{K: AtomExchangeUSDC, V: "0.0001"}).Error; err != nil {
 		t.Fatalf("seed USDC exchange atomicity: %v", err)
@@ -102,5 +100,50 @@ func TestUSDCCheckoutListsBinanceAndOKX(t *testing.T) {
 	}
 	if !providers["binance"] || !providers["okx"] {
 		t.Fatalf("USDC providers = %#v, want Binance and OKX", providers)
+	}
+}
+
+func TestUSDCCheckoutOmitsExchangeWalletsWithoutCredentials(t *testing.T) {
+	db := newExchangeReselectionTestDB(t)
+	setExchangeReselectionTestConf(t, ExchangeBinanceEnabled, "")
+	setExchangeReselectionTestConf(t, ExchangeBinanceAPIKey, "")
+	setExchangeReselectionTestConf(t, ExchangeBinanceSecretKey, "")
+	setExchangeReselectionTestConf(t, ExchangeBinanceUID, "123456")
+	setExchangeReselectionTestConf(t, ExchangeOKXEnabled, "")
+	setExchangeReselectionTestConf(t, ExchangeOKXAPIKey, "")
+	setExchangeReselectionTestConf(t, ExchangeOKXSecretKey, "")
+	setExchangeReselectionTestConf(t, ExchangeOKXPassphrase, "")
+	setExchangeReselectionTestConf(t, ExchangeOKXUID, "654321")
+	t.Setenv("BEPUSDT_BINANCE_API_KEY", "")
+	t.Setenv("BEPUSDT_BINANCE_SECRET_KEY", "")
+	t.Setenv("BEPUSDT_BINANCE_UID", "")
+	t.Setenv("BEPUSDT_OKX_API_KEY", "")
+	t.Setenv("BEPUSDT_OKX_SECRET_KEY", "")
+	t.Setenv("BEPUSDT_OKX_PASSPHRASE", "")
+	t.Setenv("BEPUSDT_OKX_UID", "")
+
+	if err := db.Create(&Conf{K: AtomExchangeUSDC, V: "0.0001"}).Error; err != nil {
+		t.Fatalf("seed USDC exchange atomicity: %v", err)
+	}
+	if err := db.Create(&Rate{Rate: "7", RawRate: 7, Fiat: string(CNY), Crypto: string(USDC)}).Error; err != nil {
+		t.Fatalf("seed USDC rate: %v", err)
+	}
+	wallets := []Wallet{
+		{Name: "Stale Binance Pay USDC", Status: WaStatusEnable, Address: "123456", MatchAddr: "123456", TradeType: string(UsdcBinance)},
+		{Name: "Stale OKX Pay USDC", Status: WaStatusEnable, Address: "654321", MatchAddr: "654321", TradeType: string(UsdcOKX)},
+	}
+	if err := db.Create(&wallets).Error; err != nil {
+		t.Fatalf("seed stale USDC exchange wallets: %v", err)
+	}
+
+	order := Order{Money: "70", Fiat: CNY, Status: OrderStatusWaiting, ApiType: OrderApiTypeEpusdtOrder}
+	if methods := order.GetMethods(USDC); len(methods) != 0 {
+		t.Fatalf("USDC exchange methods without configured accounts = %#v, want none", methods)
+	}
+	if _, err := BuildTrade(OrderParams{TradeType: UsdcBinance}); err == nil {
+		t.Fatal("BuildTrade accepted a stale Binance wallet without configured credentials")
+	}
+	if _, err := BuildTrade(OrderParams{TradeType: UsdcOKX}); err == nil {
+		t.Fatal("BuildTrade accepted a stale OKX wallet without configured credentials")
 	}
 }

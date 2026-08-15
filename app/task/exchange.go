@@ -3,7 +3,6 @@ package task
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +16,7 @@ import (
 var (
 	exchangePoller *exchangeRuntime
 	exchangeMu     sync.RWMutex
-	exchangeAssets = []string{string(model.USDT), string(model.USDC)}
+	exchangeAssets = model.GetExchangeAssets()
 )
 
 type exchangeRuntime struct {
@@ -36,39 +35,7 @@ func exchangeInit() error {
 }
 
 func loadExchangeRuntimeConfig() (exchange.RuntimeConfig, error) {
-	return exchange.LoadRuntimeConfigFrom(func(key string) string {
-		provider := ""
-		if strings.HasPrefix(key, "BEPUSDT_BINANCE_") {
-			provider = model.GetC(model.ExchangeBinanceEnabled)
-		}
-		if strings.HasPrefix(key, "BEPUSDT_OKX_") {
-			provider = model.GetC(model.ExchangeOKXEnabled)
-		}
-		if provider == "0" {
-			return ""
-		}
-
-		if confKey, ok := exchangeConfigKeys[key]; ok {
-			if value := strings.TrimSpace(model.GetC(confKey)); value != "" {
-				return value
-			}
-		}
-		return os.Getenv(key)
-	})
-}
-
-var exchangeConfigKeys = map[string]model.ConfKey{
-	"BEPUSDT_EXCHANGE_POLL_INTERVAL": model.ExchangePollInterval,
-	"BEPUSDT_EXCHANGE_TIMEOUT":       model.ExchangeTimeout,
-	"BEPUSDT_BINANCE_API_KEY":        model.ExchangeBinanceAPIKey,
-	"BEPUSDT_BINANCE_SECRET_KEY":     model.ExchangeBinanceSecretKey,
-	"BEPUSDT_BINANCE_UID":            model.ExchangeBinanceUID,
-	"BEPUSDT_BINANCE_API_URL":        model.ExchangeBinanceAPIURL,
-	"BEPUSDT_OKX_API_KEY":            model.ExchangeOKXAPIKey,
-	"BEPUSDT_OKX_SECRET_KEY":         model.ExchangeOKXSecretKey,
-	"BEPUSDT_OKX_PASSPHRASE":         model.ExchangeOKXPassphrase,
-	"BEPUSDT_OKX_UID":                model.ExchangeOKXUID,
-	"BEPUSDT_OKX_API_URL":            model.ExchangeOKXAPIURL,
+	return exchange.LoadRuntimeConfigFrom(model.GetExchangeRuntimeConfigValue)
 }
 
 // ReloadExchangePayments applies database and environment settings without
@@ -270,20 +237,7 @@ func pollExchange(ctx context.Context, client exchange.Client, asset string, pen
 }
 
 func exchangeTradeType(provider, asset string) model.TradeType {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	asset = strings.ToUpper(strings.TrimSpace(asset))
-	switch provider + ":" + asset {
-	case "binance:USDT":
-		return model.UsdtBinance
-	case "binance:USDC":
-		return model.UsdcBinance
-	case "okx:USDT":
-		return model.UsdtOKX
-	case "okx:USDC":
-		return model.UsdcOKX
-	default:
-		return ""
-	}
+	return model.GetExchangeTradeType(provider, asset)
 }
 
 func exchangeCursorKey(provider, asset string) string {
