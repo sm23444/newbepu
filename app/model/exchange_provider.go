@@ -6,47 +6,34 @@ import (
 )
 
 type exchangeSetting struct {
-	confKey ConfKey
-	envKey  string
+	confKey  ConfKey
+	envKey   string
+	required bool
+	uid      bool
 }
 
 type exchangeProviderConf struct {
 	enabledKey ConfKey
-	uid        exchangeSetting
-	required   []exchangeSetting
 	settings   []exchangeSetting
 }
 
 var exchangeProviderRegistry = map[string]exchangeProviderConf{
 	"binance": {
 		enabledKey: ExchangeBinanceEnabled,
-		uid:        exchangeSetting{confKey: ExchangeBinanceUID, envKey: "BEPUSDT_BINANCE_UID"},
-		required: []exchangeSetting{
-			{confKey: ExchangeBinanceAPIKey, envKey: "BEPUSDT_BINANCE_API_KEY"},
-			{confKey: ExchangeBinanceSecretKey, envKey: "BEPUSDT_BINANCE_SECRET_KEY"},
-			{confKey: ExchangeBinanceUID, envKey: "BEPUSDT_BINANCE_UID"},
-		},
 		settings: []exchangeSetting{
-			{confKey: ExchangeBinanceAPIKey, envKey: "BEPUSDT_BINANCE_API_KEY"},
-			{confKey: ExchangeBinanceSecretKey, envKey: "BEPUSDT_BINANCE_SECRET_KEY"},
-			{confKey: ExchangeBinanceUID, envKey: "BEPUSDT_BINANCE_UID"},
+			{confKey: ExchangeBinanceAPIKey, envKey: "BEPUSDT_BINANCE_API_KEY", required: true},
+			{confKey: ExchangeBinanceSecretKey, envKey: "BEPUSDT_BINANCE_SECRET_KEY", required: true},
+			{confKey: ExchangeBinanceUID, envKey: "BEPUSDT_BINANCE_UID", required: true, uid: true},
 			{confKey: ExchangeBinanceAPIURL, envKey: "BEPUSDT_BINANCE_API_URL"},
 		},
 	},
 	"okx": {
 		enabledKey: ExchangeOKXEnabled,
-		uid:        exchangeSetting{confKey: ExchangeOKXUID, envKey: "BEPUSDT_OKX_UID"},
-		required: []exchangeSetting{
-			{confKey: ExchangeOKXAPIKey, envKey: "BEPUSDT_OKX_API_KEY"},
-			{confKey: ExchangeOKXSecretKey, envKey: "BEPUSDT_OKX_SECRET_KEY"},
-			{confKey: ExchangeOKXPassphrase, envKey: "BEPUSDT_OKX_PASSPHRASE"},
-			{confKey: ExchangeOKXUID, envKey: "BEPUSDT_OKX_UID"},
-		},
 		settings: []exchangeSetting{
-			{confKey: ExchangeOKXAPIKey, envKey: "BEPUSDT_OKX_API_KEY"},
-			{confKey: ExchangeOKXSecretKey, envKey: "BEPUSDT_OKX_SECRET_KEY"},
-			{confKey: ExchangeOKXPassphrase, envKey: "BEPUSDT_OKX_PASSPHRASE"},
-			{confKey: ExchangeOKXUID, envKey: "BEPUSDT_OKX_UID"},
+			{confKey: ExchangeOKXAPIKey, envKey: "BEPUSDT_OKX_API_KEY", required: true},
+			{confKey: ExchangeOKXSecretKey, envKey: "BEPUSDT_OKX_SECRET_KEY", required: true},
+			{confKey: ExchangeOKXPassphrase, envKey: "BEPUSDT_OKX_PASSPHRASE", required: true},
+			{confKey: ExchangeOKXUID, envKey: "BEPUSDT_OKX_UID", required: true, uid: true},
 			{confKey: ExchangeOKXAPIURL, envKey: "BEPUSDT_OKX_API_URL"},
 		},
 	},
@@ -84,13 +71,21 @@ func IsExchangeProviderEnabled(t TradeType) bool {
 	if !ok || strings.TrimSpace(GetC(provider.enabledKey)) == "0" {
 		return false
 	}
-	for _, setting := range provider.required {
-		if configuredExchangeValue(setting) == "" {
+	uid := ""
+	for _, setting := range provider.settings {
+		if !setting.required && !setting.uid {
+			continue
+		}
+		value := configuredExchangeValue(setting)
+		if setting.required && value == "" {
 			return false
+		}
+		if setting.uid {
+			uid = value
 		}
 	}
 
-	return exchangeUIDPattern.MatchString(configuredExchangeValue(provider.uid))
+	return exchangeUIDPattern.MatchString(uid)
 }
 
 func GetConfiguredExchangeUID(t TradeType) string {
@@ -103,7 +98,13 @@ func GetConfiguredExchangeUID(t TradeType) string {
 		return ""
 	}
 
-	return configuredExchangeValue(provider.uid)
+	for _, setting := range provider.settings {
+		if setting.uid {
+			return configuredExchangeValue(setting)
+		}
+	}
+
+	return ""
 }
 
 func GetExchangeRuntimeConfigValue(key string) string {
