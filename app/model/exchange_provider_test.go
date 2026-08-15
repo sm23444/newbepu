@@ -68,8 +68,8 @@ func TestIsExchangeProviderEnabledRequiresCompleteCredentials(t *testing.T) {
 }
 
 func TestExchangeProviderRegistryDeclaresEachSettingOnce(t *testing.T) {
-	seenConfKeys := make(map[ConfKey]string)
-	seenEnvKeys := make(map[string]string)
+	seenConfKeys := make(map[ConfKey]ExchangeProvider)
+	seenEnvKeys := make(map[string]ExchangeProvider)
 	for name, provider := range exchangeProviderRegistry {
 		if provider.enabledKey == "" {
 			t.Fatalf("provider %s has no enabled key", name)
@@ -96,6 +96,42 @@ func TestExchangeProviderRegistryDeclaresEachSettingOnce(t *testing.T) {
 		}
 		if uidCount != 1 {
 			t.Fatalf("provider %s UID setting count = %d, want 1", name, uidCount)
+		}
+	}
+	for tradeType, trade := range registry {
+		if trade.ExchangeProvider == "" {
+			continue
+		}
+		if _, exists := exchangeProviderRegistry[trade.ExchangeProvider]; !exists {
+			t.Fatalf("trade type %s references unknown provider %q", tradeType, trade.ExchangeProvider)
+		}
+	}
+}
+
+func TestGetExchangeTradeTypeIncludesUSDTAndUSDC(t *testing.T) {
+	for _, test := range []struct {
+		provider string
+		asset    string
+		want     TradeType
+	}{
+		{provider: "binance", asset: "USDT", want: UsdtBinance},
+		{provider: "binance", asset: "usdc", want: UsdcBinance},
+		{provider: "OKX", asset: "USDT", want: UsdtOKX},
+		{provider: "okx", asset: "USDC", want: UsdcOKX},
+	} {
+		if got := GetExchangeTradeType(test.provider, test.asset); got != test.want {
+			t.Fatalf("GetExchangeTradeType(%q, %q) = %q, want %q", test.provider, test.asset, got, test.want)
+		}
+	}
+	for _, test := range []struct {
+		provider string
+		asset    string
+	}{
+		{provider: "binanec", asset: "USDT"},
+		{provider: "binance", asset: "BTC"},
+	} {
+		if got := GetExchangeTradeType(test.provider, test.asset); got != "" {
+			t.Fatalf("unsupported provider/asset %q/%q mapped to %q", test.provider, test.asset, got)
 		}
 	}
 }

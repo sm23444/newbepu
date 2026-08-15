@@ -140,19 +140,22 @@ func exchangePollingLoop(ctx context.Context) {
 
 // TestExchangePayment checks the configured account and history permission.
 func TestExchangePayment(ctx context.Context, provider string) (int, error) {
-	provider = strings.ToLower(strings.TrimSpace(provider))
 	config, err := loadExchangeRuntimeConfig()
 	if err != nil {
 		return 0, err
 	}
+	providerID, ok := model.ParseExchangeProvider(provider)
+	if !ok {
+		return 0, fmt.Errorf("unsupported exchange provider")
+	}
 	var client exchange.Client
-	switch provider {
-	case "binance":
+	switch providerID {
+	case model.ExchangeProviderBinance:
 		if config.Binance == nil {
 			return 0, fmt.Errorf("Binance credentials are not configured")
 		}
 		client, err = exchange.NewBinanceClient(*config.Binance)
-	case "okx":
+	case model.ExchangeProviderOKX:
 		if config.OKX == nil {
 			return 0, fmt.Errorf("OKX credentials are not configured")
 		}
@@ -175,7 +178,7 @@ func TestExchangePayment(ctx context.Context, provider string) (int, error) {
 }
 
 func pollExchange(ctx context.Context, client exchange.Client, asset string, pendingCursor int64) int64 {
-	tradeType := exchangeTradeType(client.Provider(), asset)
+	tradeType := model.GetExchangeTradeType(client.Provider(), asset)
 	if tradeType == "" || !hasLookbackOrders([]model.TradeType{tradeType}) {
 		return pendingCursor
 	}
@@ -234,10 +237,6 @@ func pollExchange(ctx context.Context, client exchange.Client, asset string, pen
 	}
 
 	return nextCursor
-}
-
-func exchangeTradeType(provider, asset string) model.TradeType {
-	return model.GetExchangeTradeType(provider, asset)
 }
 
 func exchangeCursorKey(provider, asset string) string {

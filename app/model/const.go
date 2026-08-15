@@ -7,6 +7,7 @@ type Fiat string
 type CoinId string
 type Crypto string
 type TradeType string
+type ExchangeProvider string
 type MatchMode string
 type Network string
 type Range struct {
@@ -26,9 +27,14 @@ type TradeTypeConf struct {
 	EndpointKey      ConfKey // RPC 端点配置键
 	AddrCaseSens     bool    // 钱包地址是否大小写敏感，如果为 false 则会统一转为小写比较
 	AtomKey          ConfKey // Optional amount step override for this trade type.
-	ExchangeProvider string
+	ExchangeProvider ExchangeProvider
 	ReceiverLabel    string
 }
+
+const (
+	ExchangeProviderBinance ExchangeProvider = "binance"
+	ExchangeProviderOKX     ExchangeProvider = "okx"
+)
 
 const (
 	AdminUsername ConfKey = "admin_username"

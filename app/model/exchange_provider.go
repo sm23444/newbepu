@@ -17,8 +17,8 @@ type exchangeProviderConf struct {
 	settings   []exchangeSetting
 }
 
-var exchangeProviderRegistry = map[string]exchangeProviderConf{
-	"binance": {
+var exchangeProviderRegistry = map[ExchangeProvider]exchangeProviderConf{
+	ExchangeProviderBinance: {
 		enabledKey: ExchangeBinanceEnabled,
 		settings: []exchangeSetting{
 			{confKey: ExchangeBinanceAPIKey, envKey: "BEPUSDT_BINANCE_API_KEY", required: true},
@@ -27,7 +27,7 @@ var exchangeProviderRegistry = map[string]exchangeProviderConf{
 			{confKey: ExchangeBinanceAPIURL, envKey: "BEPUSDT_BINANCE_API_URL"},
 		},
 	},
-	"okx": {
+	ExchangeProviderOKX: {
 		enabledKey: ExchangeOKXEnabled,
 		settings: []exchangeSetting{
 			{confKey: ExchangeOKXAPIKey, envKey: "BEPUSDT_OKX_API_KEY", required: true},
@@ -37,6 +37,16 @@ var exchangeProviderRegistry = map[string]exchangeProviderConf{
 			{confKey: ExchangeOKXAPIURL, envKey: "BEPUSDT_OKX_API_URL"},
 		},
 	},
+}
+
+func ParseExchangeProvider(value string) (ExchangeProvider, bool) {
+	provider := ExchangeProvider(strings.ToLower(strings.TrimSpace(value)))
+	_, ok := exchangeProviderRegistry[provider]
+	if !ok {
+		return "", false
+	}
+
+	return provider, true
 }
 
 var exchangeRuntimeSettings = map[string]ConfKey{
@@ -138,7 +148,7 @@ func paymentKind(t TradeType) string {
 
 func exchangeProvider(t TradeType) string {
 	if trade, ok := exchangeTradeConfig(t); ok {
-		return trade.ExchangeProvider
+		return string(trade.ExchangeProvider)
 	}
 	return ""
 }

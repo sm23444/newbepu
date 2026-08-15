@@ -39,7 +39,7 @@ var registry = map[TradeType]TradeTypeConf{
 		AmountRange:      usdGeneralRange,
 		AddrCaseSens:     true,
 		AtomKey:          AtomExchangeUSDT,
-		ExchangeProvider: "binance",
+		ExchangeProvider: ExchangeProviderBinance,
 		ReceiverLabel:    "币安ID",
 	},
 	UsdtOKX: {
@@ -51,7 +51,7 @@ var registry = map[TradeType]TradeTypeConf{
 		AmountRange:      usdGeneralRange,
 		AddrCaseSens:     true,
 		AtomKey:          AtomExchangeUSDT,
-		ExchangeProvider: "okx",
+		ExchangeProvider: ExchangeProviderOKX,
 		ReceiverLabel:    "欧易UID",
 	},
 	UsdcBinance: {
@@ -63,7 +63,7 @@ var registry = map[TradeType]TradeTypeConf{
 		AmountRange:      usdGeneralRange,
 		AddrCaseSens:     true,
 		AtomKey:          AtomExchangeUSDC,
-		ExchangeProvider: "binance",
+		ExchangeProvider: ExchangeProviderBinance,
 		ReceiverLabel:    "币安ID",
 	},
 	UsdcOKX: {
@@ -75,7 +75,7 @@ var registry = map[TradeType]TradeTypeConf{
 		AmountRange:      usdGeneralRange,
 		AddrCaseSens:     true,
 		AtomKey:          AtomExchangeUSDC,
-		ExchangeProvider: "okx",
+		ExchangeProvider: ExchangeProviderOKX,
 		ReceiverLabel:    "欧易UID",
 	},
 	UsdtTon: {
@@ -574,10 +574,13 @@ func GetTradeTypeByCurrencyAndNetwork(currency, network string) (TradeType, erro
 }
 
 func GetExchangeTradeType(provider, asset string) TradeType {
-	provider = strings.ToLower(strings.TrimSpace(provider))
+	providerID, ok := ParseExchangeProvider(provider)
+	if !ok {
+		return ""
+	}
 	asset = strings.ToUpper(strings.TrimSpace(asset))
 	for tradeType, trade := range registry {
-		if trade.ExchangeProvider == provider && string(trade.Crypto) == asset {
+		if trade.ExchangeProvider == providerID && string(trade.Crypto) == asset {
 			return tradeType
 		}
 	}
