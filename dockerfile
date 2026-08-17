@@ -1,5 +1,8 @@
 FROM node:24.18.0-alpine3.23 AS frontend-builder
 
+ARG VERSION=unknown
+ENV VITE_APP_VERSION=${VERSION}
+
 WORKDIR /web
 
 RUN corepack enable \

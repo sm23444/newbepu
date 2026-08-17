@@ -2,7 +2,7 @@
   <a-layout-footer class="footer">
     <div class="footer_title">
       <div class="left-placeholder"></div>
-      <span @click="onBEpusdt" class="primary-copyright">{{ currentYear }} © BEpusdt. All rights reserved.</span>
+      <span @click="onSmpay" class="primary-copyright">{{ currentYear }} © smpay · v{{ appVersion }}</span>
       <span class="secondary-info">Powered by SnowAdmin</span>
     </div>
   </a-layout-footer>
@@ -10,8 +10,9 @@
 
 <script setup lang="ts">
 const currentYear = ref(new Date().getFullYear());
-const onBEpusdt = () => {
-  window.open("https://github.com/v03413/BEpusdt", "_blank");
+const appVersion = import.meta.env.VITE_APP_VERSION || "dev";
+const onSmpay = () => {
+  window.open("https://github.com/sm23444/newbepu", "_blank");
 };
 </script>
 

@@ -1,5 +1,11 @@
 # 更新记录
 
+## v0.0.10
+
+- 后台页脚改为显示 `年份 © smpay · v版本号`。
+- Docker 构建时自动将 `VERSION` 注入前端，后续发布无需手动修改页脚版本。
+- 移除页脚中的 `All rights reserved.`，并将点击链接改为二开仓库。
+
 ## v0.0.9
 
 - 将 Telegram 启动欢迎消息中的源码地址改为二开仓库：`https://github.com/sm23444/newbepu`。
