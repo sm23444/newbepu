@@ -248,7 +248,7 @@ func deliverBepusdtStatusUpdate(db *gorm.DB, client *http.Client, authToken stri
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Powered-By", "https://github.com/v03413/BEpusdt")
+	req.Header.Set("Powered-By", "https://github.com/sm23444/newbepu")
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

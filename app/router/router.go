@@ -163,7 +163,7 @@ func noRoute() gin.HandlerFunc {
 
 func copyright() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		ctx.Writer.Header().Set("Payment-Gateway", "https://github.com/v03413/BEpusdt")
+		ctx.Writer.Header().Set("Payment-Gateway", "https://github.com/sm23444/newbepu")
 	}
 }
 

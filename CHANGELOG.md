@@ -1,5 +1,9 @@
 # 更新记录
 
+## v0.0.11
+
+- 将 `Payment-Gateway` 和 `Powered-By` 请求头中的项目地址改为二开仓库：`https://github.com/sm23444/newbepu`。
+
 ## v0.0.10
 
 - 后台页脚改为显示 `年份 © smpay · v版本号`。
