@@ -17,7 +17,7 @@ func TestValidPublicURLSetting(t *testing.T) {
 		{name: "HTTPS support URL", key: model.PaymentSupportUrl, value: "https://support.example/help", want: true},
 		{name: "HTTP support URL", key: model.PaymentSupportUrl, value: "http://support.example/help", want: false},
 		{name: "javascript support URL", key: model.PaymentSupportUrl, value: "javascript:alert(1)", want: false},
-		{name: "unrelated setting", key: model.PaymentCheckout, value: "official", want: true},
+		{name: "unrelated setting", key: model.PaymentCheckout, value: "sm", want: true},
 	}
 
 	for _, tt := range tests {

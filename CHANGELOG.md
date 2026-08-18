@@ -1,5 +1,13 @@
 # 更新记录
 
+## v0.0.12
+
+- Telegram 启动通知改用 `smpay` 名称和 `v` 版本前缀，移除频道与社区按钮，并保留二开仓库预览链接。
+- 将登录页、后台项目链接、RPC、金额匹配、MQTT 和 USDC 支付页面的项目地址统一为二开仓库。
+- 删除官方和 LangGe 收银台，仅保留 SM 收银台；旧配置会自动回退到 SM 模板。
+- 移除后台 MQTT 设置标签和 RPC 说明按钮，保留后端 MQTT 功能。
+- 基本设置头像改为 sm23444 的 GitHub 头像。
+
 ## v0.0.11
 
 - 将 `Payment-Gateway` 和 `Powered-By` 请求头中的项目地址改为二开仓库：`https://github.com/sm23444/newbepu`。

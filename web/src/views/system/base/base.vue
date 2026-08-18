@@ -6,7 +6,7 @@
           <a-col :span="isMobile ? 24 : 2">
             <div :class="{ center: isMobile }">
               <a-avatar :size="100" trigger-type="mask">
-                <img alt="avatar" src="https://avatars.githubusercontent.com/u/49953737?v=4" />
+                <img alt="avatar" src="https://github.com/sm23444.png" />
                 <template #trigger-icon>
                   <IconEdit />
                 </template>
@@ -46,9 +46,6 @@
               <a-tab-pane key="6" title="交易所支付">
                 <Exchange />
               </a-tab-pane>
-              <a-tab-pane key="5" title="MQTT设置">
-                <Mqtt v-model="Conf" @refresh="refresh" />
-              </a-tab-pane>
               <a-tab-pane key="3" title="安全设置">
                 <Security v-model="Conf" @refresh="refresh" />
               </a-tab-pane>
@@ -67,7 +64,6 @@ import Api from "./components/api.vue";
 import Exchange from "./components/exchange.vue";
 import { getsConfAPI } from "@/api/modules/conf/index";
 import Notifier from "./components/notifier.vue";
-import Mqtt from "./components/mqtt.vue";
 import { useDevicesSize } from "@/hooks/useDevicesSize";
 import { useLayoutModel } from "@/hooks/useLayoutModel";
 

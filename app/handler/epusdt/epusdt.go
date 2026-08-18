@@ -409,8 +409,12 @@ func (Epusdt) Checkout(ctx *gin.Context) {
 		return
 	}
 
-	// 收银台模板
-	tmpl := model.GetC(model.PaymentCheckout) + "/checkout.html"
+	// 收银台模板。旧配置可能仍保存已删除的 official/langge，统一回退到 SM。
+	checkout := model.GetC(model.PaymentCheckout)
+	if _, ok := model.CheckoutList()[checkout]; !ok {
+		checkout = "sm"
+	}
+	tmpl := checkout + "/checkout.html"
 
 	ctx.HTML(200, tmpl, gin.H{"trade_id": tradeId})
 }

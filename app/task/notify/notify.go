@@ -99,7 +99,7 @@ func epay(ctx context.Context, order model.Order, client *http.Client) error {
 		return err
 	}
 
-	postReq.Header.Set("Powered-By", "https://github.com/v03413/bepusdt")
+	postReq.Header.Set("Powered-By", "https://github.com/sm23444/newbepu")
 	resp, err := client.Do(postReq)
 	if err != nil {
 		return err
@@ -140,7 +140,7 @@ func epusdt(ctx context.Context, order model.Order, client *http.Client) error {
 	}
 
 	postReq.Header.Set("Content-Type", "application/json")
-	postReq.Header.Set("Powered-By", "https://github.com/v03413/bepusdt")
+	postReq.Header.Set("Powered-By", "https://github.com/sm23444/newbepu")
 	postReq.Header.Set("User-Agent", "BEpusdt/"+app.Version)
 	resp, err := client.Do(postReq)
 	if err != nil {

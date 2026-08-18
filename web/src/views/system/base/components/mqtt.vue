@@ -4,7 +4,7 @@
       <a-card title="MQTT 发布设置">
         <a-alert type="info" style="margin-bottom: 16px">
           系统可将扫描到的交易信息发布到 MQTT 服务器，其它系统通过订阅实时获取数据，
-          <a-link href="https://github.com/v03413/BEpusdt/blob/main/docs/api/mqtt.md" target="_blank" :hoverable="false">
+          <a-link href="https://github.com/sm23444/newbepu/blob/main/docs/api/mqtt.md" target="_blank" :hoverable="false">
             查看文档
           </a-link>
         </a-alert>

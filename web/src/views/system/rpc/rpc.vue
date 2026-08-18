@@ -80,14 +80,6 @@
               <icon-settings />
             </div>
             <span>区块网络配置</span>
-            <a
-              href="https://github.com/v03413/BEpusdt/blob/main/docs/faq/rpc-endpoint.md"
-              target="_blank"
-              class="title-doc-link"
-            >
-              <icon-exclamation-circle />
-              必读：节点配置说明
-            </a>
           </div>
         </template>
 
@@ -422,28 +414,6 @@ onUnmounted(() => {
 <style lang="scss" scoped>
 .full-height {
   min-height: 100%;
-}
-
-.title-doc-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 4px;
-  padding: 2px 10px;
-  border-radius: 20px;
-  background: rgba(var(--danger-6), 0.1);
-  border: 1px solid rgba(var(--danger-6), 0.3);
-  color: $color-danger;
-  font-size: 12px;
-  font-weight: 600;
-  text-decoration: none;
-  transition: all 0.2s ease;
-
-  &:hover {
-    background: rgba(var(--danger-6), 0.18);
-    border-color: rgba(var(--danger-6), 0.55);
-    box-shadow: 0 2px 8px rgba(var(--danger-6), 0.2);
-  }
 }
 
 /* ============ 状态总览卡片 ============ */

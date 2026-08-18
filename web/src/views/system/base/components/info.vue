@@ -66,7 +66,7 @@
             <template #extra>
               订单交易在金额确认时，使用不同算法的算法进行比对；详细区别请看
               <a-link
-                href="https://github.com/v03413/BEpusdt/blob/main/docs/payment-match-mode/README.md"
+                href="https://github.com/sm23444/newbepu/blob/main/docs/payment-match-mode/README.md"
                 target="_blank"
                 :hoverable="false"
               >

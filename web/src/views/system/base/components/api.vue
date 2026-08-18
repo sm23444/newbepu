@@ -131,8 +131,8 @@ const normalizePaymentCheckout = (value?: string) => {
   if (validValues.includes(rawValue)) {
     return rawValue;
   }
-  if (validValues.includes("official")) {
-    return "official";
+  if (validValues.includes("sm")) {
+    return "sm";
   }
   return validValues[0] || "";
 };

@@ -132,7 +132,7 @@ const onLogin = async () => {
 
 // 忘记密码
 const handleForgotPassword = () => {
-  window.open("https://github.com/v03413/BEpusdt", "_blank");
+  window.open("https://github.com/sm23444/newbepu", "_blank");
 };
 </script>
 

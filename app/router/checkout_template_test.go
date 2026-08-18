@@ -9,13 +9,13 @@ import (
 	"github.com/v03413/bepusdt/static"
 )
 
-func TestLangGeCheckoutTemplateIsEmbedded(t *testing.T) {
-	checkout, err := readCheckoutInfoFromFS(static.Checkout, "checkout/langge")
+func TestSMCheckoutTemplateIsEmbedded(t *testing.T) {
+	checkout, err := readCheckoutInfoFromFS(static.Checkout, "checkout/sm")
 	if err != nil {
-		t.Fatalf("read langge checkout info: %v", err)
+		t.Fatalf("read sm checkout info: %v", err)
 	}
 
-	if checkout.Name != "LangGe design" {
+	if checkout.Name != "sm" {
 		t.Fatalf("unexpected checkout name: %q", checkout.Name)
 	}
 	if checkout.Author == "" {
@@ -25,25 +25,29 @@ func TestLangGeCheckoutTemplateIsEmbedded(t *testing.T) {
 		t.Fatal("checkout desc is required")
 	}
 
-	view, err := fs.ReadFile(static.Checkout, "checkout/langge/views/checkout.html")
+	view, err := fs.ReadFile(static.Checkout, "checkout/sm/views/checkout.html")
 	if err != nil {
-		t.Fatalf("read langge checkout template: %v", err)
+		t.Fatalf("read sm checkout template: %v", err)
 	}
-	if !strings.Contains(string(view), "{{ .trade_id }}") {
-		t.Fatal("langge checkout template must only depend on trade_id server injection")
+	viewText := string(view)
+	if !strings.Contains(viewText, "<!DOCTYPE html>") {
+		t.Fatal("sm checkout template must be a complete HTML document")
+	}
+	if strings.Contains(viewText, "{{") {
+		t.Fatal("sm checkout template must not contain unresolved Go template actions")
 	}
 
 	tmpl := template.New("default")
-	if !registerTemplatesFromFS(tmpl, static.Checkout, "checkout/langge", "langge") {
-		t.Fatal("langge checkout template was not registered")
+	if !registerTemplatesFromFS(tmpl, static.Checkout, "checkout/sm", "sm") {
+		t.Fatal("sm checkout template was not registered")
 	}
-	if tmpl.Lookup("langge/checkout.html") == nil {
-		t.Fatal("langge checkout template was not registered under expected name")
+	if tmpl.Lookup("sm/checkout.html") == nil {
+		t.Fatal("sm checkout template was not registered under expected name")
 	}
 }
 
 func TestCheckoutScriptsUseHTTPSOnlyRedirects(t *testing.T) {
-	for _, checkout := range []string{"official", "sm", "langge"} {
+	for _, checkout := range []string{"sm"} {
 		t.Run(checkout, func(t *testing.T) {
 			path := "checkout/" + checkout + "/assets/js/checkout.js"
 			data, err := fs.ReadFile(static.Checkout, path)
