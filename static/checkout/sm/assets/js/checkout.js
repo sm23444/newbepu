@@ -598,8 +598,8 @@
                 '</svg>' +
             '</div>' +
             '<div class="modal-title" style="color:#ef4444;">' + t('timeoutTitle', '支付已超时') + '</div>' +
-            '<p class="modal-subtitle">' + t('timeoutMessage', '很抱歉，支付时间已超时。<br>如已付款，可提交付款复核。') + '</p>' +
-            '<button type="button" class="return-btn" id="timeoutReviewButton">申请付款复核</button>' +
+            '<p class="modal-subtitle">' + t('timeoutMessage', '很抱歉，支付时间已超时。<br>如已付款，可申请人工复核。') + '</p>' +
+            '<button type="button" class="return-btn" id="timeoutReviewButton">申请人工复核</button>' +
             '<a href="/" class="return-btn">' + t('returnBtn', '返回商户平台') + '</a>' +
             '</div></div>';
         document.body.appendChild(ov);
@@ -975,7 +975,7 @@
                 .then(function (response) { return response.json(); })
                 .then(function (res) {
                     if (res.status_code !== 201 && res.code !== 201) throw new Error(res.message || res.msg || '复核提交失败');
-                    message.textContent = '复核已提交，请等待管理员处理';
+                    message.textContent = '人工复核申请已提交，请等待人工审核处理';
                     message.className = 'manual-tx-message success';
                     setTimeout(function () { closeModal(false); }, 900);
                 })
