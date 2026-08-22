@@ -901,26 +901,24 @@
         var cancel = document.getElementById('paymentReviewCancel');
         var hash = document.getElementById('paymentReviewHash');
         var hashLabel = document.getElementById('paymentReviewHashLabel');
-        var hashHint = document.getElementById('paymentReviewHashHint');
         var description = document.getElementById('paymentReviewDescription');
         var evidence = document.getElementById('paymentReviewEvidence');
         var submit = document.getElementById('paymentReviewSubmit');
         var message = document.getElementById('paymentReviewMessage');
-        if (!section || !modal || !form || !toggle || !close || !cancel || !hash || !hashLabel || !hashHint || !description || !evidence || !submit || !message) return;
+        if (!section || !modal || !form || !toggle || !close || !cancel || !hash || !hashLabel || !description || !evidence || !submit || !message) return;
 
         var available = !!data && data.status !== 2 && data.status !== 4;
         section.hidden = !available;
         if (!available) return;
 
         var provider = String(data.provider || '').toLowerCase();
-        if (provider === 'okx') {
-            hashLabel.textContent = 'OKX Bill ID（可选）';
+        var tradeType = String(data.trade_type || '').toLowerCase();
+        if (provider === 'okx' || tradeType === 'usdt.okx' || tradeType === 'usdc.okx') {
+            hashLabel.textContent = '交易编号（可选）';
             hash.placeholder = '请填写 OKX 资金账单中的 Bill ID';
-            hashHint.textContent = 'OKX 内部转账请从资金账单复制 Bill ID，通常是账单类型为充值（type=1）的记录。';
         } else {
             hashLabel.textContent = '交易哈希（可选）';
             hash.placeholder = '请填写区块链交易哈希（TxID）';
-            hashHint.textContent = '链上支付请填写区块链浏览器中的交易哈希。';
         }
 
         function reset() {
