@@ -598,12 +598,17 @@
                 '</svg>' +
             '</div>' +
             '<div class="modal-title" style="color:#ef4444;">' + t('timeoutTitle', '支付已超时') + '</div>' +
-            '<p class="modal-subtitle">' + t('timeoutMessage', '很抱歉，支付时间已超时。<br>请重新发起支付。') + '</p>' +
+            '<p class="modal-subtitle">' + t('timeoutMessage', '很抱歉，支付时间已超时。<br>如已付款，可提交付款复核。') + '</p>' +
+            '<button type="button" class="return-btn" id="timeoutReviewButton">申请付款复核</button>' +
             '<a href="/" class="return-btn">' + t('returnBtn', '返回商户平台') + '</a>' +
             '</div></div>';
         document.body.appendChild(ov);
-        var timeoutReturn = ov.querySelector('.return-btn');
+        var timeoutReturn = ov.querySelector('a.return-btn');
         if (timeoutReturn) timeoutReturn.href = safeHttpsUrl(ret, '/');
+        var timeoutReview = document.getElementById('timeoutReviewButton');
+        if (timeoutReview) timeoutReview.addEventListener('click', function () {
+            if (window.openPaymentReview) window.openPaymentReview();
+        });
     }
 
     function createTransaction() {
@@ -887,6 +892,88 @@
         });
     }
 
+    function bindPaymentReview(data) {
+        var section = document.getElementById('paymentReviewSection');
+        var modal = document.getElementById('paymentReviewModal');
+        var form = document.getElementById('paymentReviewForm');
+        var toggle = document.getElementById('paymentReviewToggle');
+        var close = document.getElementById('paymentReviewClose');
+        var cancel = document.getElementById('paymentReviewCancel');
+        var hash = document.getElementById('paymentReviewHash');
+        var description = document.getElementById('paymentReviewDescription');
+        var evidence = document.getElementById('paymentReviewEvidence');
+        var submit = document.getElementById('paymentReviewSubmit');
+        var message = document.getElementById('paymentReviewMessage');
+        if (!section || !modal || !form || !toggle || !close || !cancel || !hash || !description || !evidence || !submit || !message) return;
+
+        var available = !!data && data.status !== 2 && data.status !== 4;
+        section.hidden = !available;
+        if (!available) return;
+
+        function reset() {
+            hash.value = '';
+            description.value = '';
+            evidence.value = '';
+            message.textContent = '';
+            message.className = 'manual-tx-message';
+            submit.disabled = false;
+        }
+        function closeModal(restoreFocus) {
+            modal.style.display = 'none';
+            toggle.setAttribute('aria-expanded', 'false');
+            reset();
+            if (restoreFocus) toggle.focus();
+        }
+        function openModal() {
+            var timeoutModal = document.getElementById('timeoutModal');
+            if (timeoutModal) timeoutModal.style.display = 'none';
+            modal.style.display = 'flex';
+            toggle.setAttribute('aria-expanded', 'true');
+            setTimeout(function () { description.focus(); }, 0);
+        }
+        window.openPaymentReview = openModal;
+        if (!toggle.dataset.bound) {
+            toggle.dataset.bound = '1';
+            toggle.addEventListener('click', openModal);
+            close.addEventListener('click', function () { closeModal(true); });
+            cancel.addEventListener('click', function () { closeModal(true); });
+            modal.addEventListener('click', function (event) {
+                if (event.target === modal) closeModal(true);
+            });
+        }
+        if (form.dataset.bound) return;
+        form.dataset.bound = '1';
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            var file = evidence.files && evidence.files[0];
+            if (!file || description.value.trim().length < 10) {
+                message.textContent = '请上传截图并填写至少10个字的付款说明';
+                message.className = 'manual-tx-message error';
+                return;
+            }
+            submit.disabled = true;
+            message.textContent = '正在提交复核...';
+            var body = new FormData();
+            body.append('trade_id', (orderData && orderData.trade_id) || gTradeId);
+            body.append('transaction_hash', hash.value.trim());
+            body.append('description', description.value.trim());
+            body.append('evidence', file);
+            fetch('/api/v1/pay/payment-review', { method: 'POST', body: body })
+                .then(function (response) { return response.json(); })
+                .then(function (res) {
+                    if (res.status_code !== 201 && res.code !== 201) throw new Error(res.message || res.msg || '复核提交失败');
+                    message.textContent = '复核已提交，请等待管理员处理';
+                    message.className = 'manual-tx-message success';
+                    setTimeout(function () { closeModal(false); }, 900);
+                })
+                .catch(function (error) {
+                    submit.disabled = false;
+                    message.textContent = error.message || '复核提交失败';
+                    message.className = 'manual-tx-message error';
+                });
+        });
+    }
+
 
     function showPayment() {
         document.getElementById('selectionStage').style.display = 'none';
@@ -952,6 +1039,7 @@
         }
         updateReselectButton();
         bindManualTxSubmit(d);
+        bindPaymentReview(d);
         bindHelp('helpBtnQ', d.support_url);
         Payment.initQrPage({
             expired_at: d.expired_at,

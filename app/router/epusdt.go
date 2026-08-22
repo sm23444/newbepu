@@ -27,5 +27,6 @@ func epusdtInit(engine *gin.Engine) {
 		payGrp.POST("/methods", epHdr.GetMethods)
 		payGrp.POST("/update-order", epHdr.UpdateOrder)
 		payGrp.POST("/submit-tx-hash", epHdr.SubmitTxHash)
+		payGrp.POST("/payment-review", epHdr.SubmitPaymentReview)
 	}
 }
