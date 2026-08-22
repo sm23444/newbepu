@@ -896,6 +896,12 @@ body {
     outline: 2px solid rgba(0, 178, 106, .18);
     border-color: var(--color-accent);
 }
+.manual-tx-hint {
+    margin: -2px 0 12px;
+    color: #86909c;
+    font-size: 12px;
+    line-height: 1.5;
+}
 .manual-tx-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;

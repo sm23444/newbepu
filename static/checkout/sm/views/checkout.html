@@ -185,8 +185,9 @@
             <button class="manual-tx-close" id="paymentReviewClose" type="button" aria-label="关闭">&times;</button>
         </div>
         <form class="manual-tx-form" id="paymentReviewForm" enctype="multipart/form-data">
-            <label class="manual-tx-label" for="paymentReviewHash">交易编号（可选）</label>
-            <input class="manual-tx-input" id="paymentReviewHash" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="OKX 填 Bill ID，链上填交易哈希">
+            <label class="manual-tx-label" id="paymentReviewHashLabel" for="paymentReviewHash">付款凭证（可选）</label>
+            <input class="manual-tx-input" id="paymentReviewHash" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="OKX 填写账单 Bill ID；链上填写交易哈希（TxID）">
+            <p class="manual-tx-hint" id="paymentReviewHashHint">OKX 内部转账请填写资金账单里的 Bill ID；链上支付请填写交易哈希。</p>
             <label class="manual-tx-label" for="paymentReviewDescription">付款说明</label>
             <textarea class="manual-tx-input" id="paymentReviewDescription" maxlength="1000" minlength="10" rows="4" placeholder="请说明付款时间、付款方式和遇到的问题（至少10个字）"></textarea>
             <label class="manual-tx-label" for="paymentReviewEvidence">付款截图</label>
