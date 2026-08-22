@@ -706,6 +706,69 @@ body {
 }
 .return-btn:hover { background: #1a1a1a; transform: translateY(-1px); }
 
+.timeout-card {
+    max-width: 384px;
+    border-radius: 16px;
+}
+.timeout-modal-body {
+    padding: 28px 28px 24px;
+}
+.timeout-icon {
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #fecaca;
+    border-radius: 50%;
+    background: #fef2f2;
+    color: #dc2626;
+}
+.timeout-title {
+    color: #b91c1c;
+    margin-bottom: 8px;
+}
+.timeout-card .modal-subtitle {
+    margin-bottom: 20px;
+    line-height: 1.55;
+}
+.timeout-actions {
+    display: grid;
+    gap: 10px;
+}
+.timeout-review-btn {
+    width: 100%;
+    height: 44px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--color-btn);
+    color: #fff;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .2s, transform .15s;
+}
+.timeout-review-btn:hover {
+    background: #1a1a1a;
+    transform: translateY(-1px);
+}
+.timeout-return-link {
+    display: inline-flex;
+    min-height: 36px;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+}
+.timeout-return-link:hover {
+    color: var(--color-text-primary);
+    text-decoration: underline;
+}
+
 .modal-footer {
     padding: 12px 20px;
     border-top: 1px solid #f0f0f0;

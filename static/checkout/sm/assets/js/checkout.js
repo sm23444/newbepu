@@ -590,20 +590,22 @@
         ov.id = 'timeoutModal';
         ov.className = 'modal-overlay';
         ov.innerHTML =
-            '<div class="modal-card"><div class="modal-body">' +
-            '<div style="margin-bottom:16px;display:flex;justify-content:center;">' +
-                '<svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<div class="modal-card timeout-card"><div class="modal-body timeout-modal-body">' +
+            '<div class="timeout-icon">' +
+                '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
                     '<circle cx="12" cy="12" r="10"/>' +
                     '<polyline points="12 6 12 12 16 14"/>' +
                 '</svg>' +
             '</div>' +
-            '<div class="modal-title" style="color:#ef4444;">' + t('timeoutTitle', '支付已超时') + '</div>' +
+            '<div class="modal-title timeout-title">' + t('timeoutTitle', '支付已超时') + '</div>' +
             '<p class="modal-subtitle">' + t('timeoutMessage', '很抱歉，支付时间已超时。<br>如已付款，可申请人工复核。') + '</p>' +
-            '<button type="button" class="return-btn" id="timeoutReviewButton">申请人工复核</button>' +
-            '<a href="/" class="return-btn">' + t('returnBtn', '返回商户平台') + '</a>' +
+            '<div class="timeout-actions">' +
+                '<button type="button" class="timeout-review-btn" id="timeoutReviewButton">已付款？申请人工复核</button>' +
+                '<a href="/" class="timeout-return-link">' + t('returnBtn', '返回商户平台') + '</a>' +
+            '</div>' +
             '</div></div>';
         document.body.appendChild(ov);
-        var timeoutReturn = ov.querySelector('a.return-btn');
+        var timeoutReturn = ov.querySelector('.timeout-return-link');
         if (timeoutReturn) timeoutReturn.href = safeHttpsUrl(ret, '/');
         var timeoutReview = document.getElementById('timeoutReviewButton');
         if (timeoutReview) timeoutReview.addEventListener('click', function () {
