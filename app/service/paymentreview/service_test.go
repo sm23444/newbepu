@@ -124,6 +124,25 @@ func TestPendingReviewIsStillRejectedAsDuplicate(t *testing.T) {
 	}
 }
 
+func TestFailedOrderCanBeSubmittedAndApprovedForManualReview(t *testing.T) {
+	db := setupPaymentReviewTestDB(t)
+	order := paymentReviewTestOrder("failed-manual-review", model.OrderStatusFailed)
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	review := reviewUpload(t, order.TradeId, "确认失败后提交截图申请人工核实")
+	if err := Resolve(review.ID, "approve", "failed-order-transaction", "已核实钱包收款记录", "admin"); err != nil {
+		t.Fatalf("approve failed-order review: %v", err)
+	}
+	var persisted model.Order
+	if err := db.First(&persisted, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != model.OrderStatusSuccess || persisted.RefHash != "failed-order-transaction" {
+		t.Fatalf("order = status %d hash %q, want success/failed-order-transaction", persisted.Status, persisted.RefHash)
+	}
+}
+
 func TestManualReviewApprovalStoresHashAndMarksOrderSuccess(t *testing.T) {
 	db := setupPaymentReviewTestDB(t)
 	order := paymentReviewTestOrder("chain-review", model.OrderStatusWaiting)

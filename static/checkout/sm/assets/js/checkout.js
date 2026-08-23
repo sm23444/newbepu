@@ -186,6 +186,11 @@
         networkLogo.src = netIcon(network);
     }
 
+    function paymentReviewAvailable(status) {
+        status = Number(status);
+        return status === 1 || status === 3 || status === 5 || status === 6;
+    }
+
     function networkName(network) {
         var names = {
             arbitrum: 'ARBITRUM',
@@ -694,6 +699,7 @@
         safeHttpsUrl: safeHttpsUrl,
         splitWalletAddress: splitWalletAddress,
         updateQrPaymentLogo: updateQrPaymentLogo,
+        paymentReviewAvailable: paymentReviewAvailable,
         showCanceled: showCanceled,
         switchLang: switchLang
     };
@@ -908,7 +914,7 @@
         var message = document.getElementById('paymentReviewMessage');
         if (!section || !modal || !form || !toggle || !close || !cancel || !description || !transactionHash || !evidence || !submit || !message) return;
 
-        var available = !!data && data.status !== 2 && data.status !== 4;
+        var available = !!data && window.Payment.paymentReviewAvailable(data.status);
         section.hidden = !available;
         if (!available) return;
 

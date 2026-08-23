@@ -17,7 +17,10 @@ func Run(db *gorm.DB, initModels []any) error {
 		return err
 	}
 
-	options := &gormigrate.Options{TableName: TableName}
+	options := &gormigrate.Options{
+		TableName:      TableName,
+		UseTransaction: db.Dialector.Name() == "sqlite",
+	}
 
 	// 旧版升级/全新安装，构建迁移表
 	if !db.Migrator().HasTable(TableName) {

@@ -135,7 +135,8 @@ func Create(input CreateInput) (CreateResult, error) {
 func reviewableOrder(order model.Order) bool {
 	return order.Status == model.OrderStatusWaiting ||
 		order.Status == model.OrderStatusConfirming ||
-		order.Status == model.OrderStatusExpired
+		order.Status == model.OrderStatusExpired ||
+		order.Status == model.OrderStatusFailed
 }
 
 func imageType(data []byte) (contentType, extension string, ok bool) {
@@ -235,7 +236,7 @@ func approveOrder(tx *gorm.DB, tradeID, txHash string, at time.Time) error {
 		updates["ref_hash"] = strings.TrimSpace(txHash)
 	}
 	updated := tx.Model(&model.Order{}).
-		Where("id = ? AND status IN (?)", order.ID, []int{model.OrderStatusWaiting, model.OrderStatusExpired, model.OrderStatusConfirming}).
+		Where("id = ? AND status IN (?)", order.ID, []int{model.OrderStatusWaiting, model.OrderStatusExpired, model.OrderStatusConfirming, model.OrderStatusFailed}).
 		Updates(updates)
 	if updated.Error != nil {
 		return updated.Error

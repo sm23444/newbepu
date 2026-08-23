@@ -2,9 +2,10 @@ package migration
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/go-gormigrate/gormigrate/v2"
 	"gorm.io/gorm"
-	"strings"
 )
 
 // 202608230900 - allow a rejected review to be resubmitted for the same order.
@@ -50,10 +51,51 @@ func m202608230900PaymentReviewTradeIDNotUnique() *gormigrate.Migration {
 func rebuildSQLitePaymentReview(tx *gorm.DB) error {
 	const oldTable = "bep_payment_review"
 	const newTable = "bep_payment_review_migration_new"
-	if err := tx.Exec("DROP TABLE IF EXISTS " + newTable).Error; err != nil {
+
+	if tx.Migrator().HasTable(newTable) {
+		oldCount, err := sqliteTableRowCount(tx, oldTable)
+		if err != nil {
+			return err
+		}
+		newCount, err := sqliteTableRowCount(tx, newTable)
+		if err != nil {
+			return err
+		}
+		// An older non-transactional migration may have dropped the original
+		// table before it could rename the populated replacement. AutoMigrate
+		// recreates an empty original table on the next start, so recover the
+		// populated replacement instead of deleting it.
+		if oldCount == 0 && newCount > 0 {
+			if err := tx.Exec("DROP TABLE " + oldTable).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec("ALTER TABLE " + newTable + " RENAME TO " + oldTable).Error; err != nil {
+				return err
+			}
+			return createSQLitePaymentReviewIndexes(tx)
+		}
+		if err := tx.Exec("DROP TABLE " + newTable).Error; err != nil {
+			return err
+		}
+	}
+	if err := createSQLitePaymentReviewTable(tx, newTable); err != nil {
 		return err
 	}
-	if err := tx.Exec("CREATE TABLE " + newTable + ` (
+	columns := "id, trade_id, status, transaction_hash, description, evidence_path, evidence_type, evidence_size, evidence_sha256, resolution_note, reviewed_by, reviewed_at, created_at, updated_at"
+	if err := tx.Exec(fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s", newTable, columns, columns, oldTable)).Error; err != nil {
+		return err
+	}
+	if err := tx.Exec("DROP TABLE " + oldTable).Error; err != nil {
+		return err
+	}
+	if err := tx.Exec("ALTER TABLE " + newTable + " RENAME TO " + oldTable).Error; err != nil {
+		return err
+	}
+	return createSQLitePaymentReviewIndexes(tx)
+}
+
+func createSQLitePaymentReviewTable(tx *gorm.DB, table string) error {
+	return tx.Exec("CREATE TABLE " + table + ` (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         trade_id VARCHAR(128) NOT NULL,
         status VARCHAR(16) NOT NULL,
@@ -68,19 +110,10 @@ func rebuildSQLitePaymentReview(tx *gorm.DB) error {
         reviewed_at DATETIME,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL
-    )`).Error; err != nil {
-		return err
-	}
-	columns := "id, trade_id, status, transaction_hash, description, evidence_path, evidence_type, evidence_size, evidence_sha256, resolution_note, reviewed_by, reviewed_at, created_at, updated_at"
-	if err := tx.Exec(fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s", newTable, columns, columns, oldTable)).Error; err != nil {
-		return err
-	}
-	if err := tx.Exec("DROP TABLE " + oldTable).Error; err != nil {
-		return err
-	}
-	if err := tx.Exec("ALTER TABLE " + newTable + " RENAME TO " + oldTable).Error; err != nil {
-		return err
-	}
+    )`).Error
+}
+
+func createSQLitePaymentReviewIndexes(tx *gorm.DB) error {
 	for _, statement := range []string{
 		"CREATE INDEX IF NOT EXISTS idx_payment_review_trade_id ON bep_payment_review (trade_id)",
 		"CREATE INDEX IF NOT EXISTS idx_bep_payment_review_status ON bep_payment_review (status)",
@@ -91,4 +124,10 @@ func rebuildSQLitePaymentReview(tx *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func sqliteTableRowCount(tx *gorm.DB, table string) (int64, error) {
+	var count int64
+	err := tx.Table(table).Count(&count).Error
+	return count, err
 }

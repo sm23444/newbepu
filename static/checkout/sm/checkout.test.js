@@ -130,3 +130,16 @@ test('manual review requires and submits a transaction reference', () => {
     assert.match(html, /id="paymentReviewTransactionHash"[^>]*required/);
     assert.match(script, /body\.append\('transaction_hash', transactionHash\.value\.trim\(\)\)/);
 });
+
+test('manual review availability matches backend reviewable order states', () => {
+    const payment = loadPayment();
+
+    assert.deepEqual([1, 2, 3, 4, 5, 6].map(status => payment.paymentReviewAvailable(status)), [
+        true,
+        false,
+        true,
+        false,
+        true,
+        true
+    ]);
+});
