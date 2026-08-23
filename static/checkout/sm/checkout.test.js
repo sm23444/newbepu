@@ -130,6 +130,7 @@ test('manual review requires and submits a transaction reference', () => {
 
     assert.match(html, /id="paymentReviewTransactionHash"[^>]*required/);
     assert.match(script, /body\.append\('transaction_hash', transactionHash\.value\.trim\(\)\)/);
+    assert.match(script, /setTimeout\(function \(\) \{ closeModal\(false\); \}, 3000\)/);
 });
 
 test('checkout script cache key matches its content hash', () => {

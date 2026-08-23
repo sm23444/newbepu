@@ -972,7 +972,7 @@
                     if (res.status_code !== 201 && res.code !== 201) throw new Error(res.message || res.msg || '复核提交失败');
                     message.textContent = '人工复核申请已提交，请等待人工审核处理';
                     message.className = 'manual-tx-message success';
-                    setTimeout(function () { closeModal(false); }, 900);
+                    setTimeout(function () { closeModal(false); }, 3000);
                 })
                 .catch(function (error) {
                     submit.disabled = false;
