@@ -178,17 +178,14 @@
         </form>
     </div>
 </div>
-<div id="paymentReviewModal" class="modal-overlay manual-tx-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="paymentReviewStateTitle">
+<div id="paymentReviewModal" class="modal-overlay manual-tx-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="paymentReviewTitle">
     <div class="manual-tx-dialog payment-review-dialog">
-        <div class="payment-review-topline"></div>
-        <div class="manual-tx-dialog-header payment-review-header">
-            <div class="payment-review-brand"><span class="payment-review-brand-dot" aria-hidden="true"></span><span class="payment-review-brand-name">sm pay</span><span class="payment-review-support">人工支持</span></div>
+        <div class="manual-tx-dialog-header">
+            <h2 class="manual-tx-dialog-title" id="paymentReviewTitle">申请人工复核</h2>
             <button class="manual-tx-close" id="paymentReviewClose" type="button" aria-label="关闭">&times;</button>
         </div>
         <form class="manual-tx-form" id="paymentReviewForm" enctype="multipart/form-data">
-            <div class="payment-review-state"><span class="payment-review-state-icon" aria-hidden="true">!</span><strong id="paymentReviewStateTitle">付款未到账</strong></div>
             <p class="payment-review-lead">请提供付款说明和截图，人工将根据当前订单核验交易</p>
-            <div class="payment-review-divider"></div>
             <label class="manual-tx-label" for="paymentReviewDescription">付款说明</label>
             <textarea class="manual-tx-input payment-review-textarea" id="paymentReviewDescription" maxlength="1000" minlength="10" rows="4" placeholder="请说明付款时间、付款方式，并填写有助于查找转账的信息（至少10个字）"></textarea>
             <label class="manual-tx-label" for="paymentReviewEvidence">付款截图</label>

@@ -901,13 +901,9 @@ body {
     animation: slideUp .28s cubic-bezier(.34, 1.56, .64, 1);
 }
 .payment-review-dialog {
-    width: min(100%, 474px);
-    border-radius: 20px;
+    width: min(100%, 440px);
+    border-radius: 14px;
     overflow: hidden;
-}
-.payment-review-topline {
-    height: 5px;
-    background: #d8e2dc;
 }
 .manual-tx-dialog-header {
     min-height: 60px;
@@ -917,30 +913,6 @@ body {
     gap: 16px;
     padding: 14px 16px 10px 20px;
     border-bottom: 1px solid var(--color-border);
-}
-.payment-review-header {
-    min-height: 68px;
-    padding: 12px 18px 12px 22px;
-}
-.payment-review-brand {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-}
-.payment-review-brand-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #17251d;
-}
-.payment-review-brand-name {
-    color: #17251d;
-    font-size: 15px;
-    font-weight: 800;
-}
-.payment-review-support {
-    color: #8a988f;
-    font-size: 12px;
 }
 .manual-tx-dialog-title {
     margin: 0;
@@ -993,39 +965,10 @@ body {
     border-color: var(--color-accent);
 }
 .payment-review-lead {
-    margin: 8px 0 22px;
+    margin: 0 0 20px;
     color: var(--color-text-secondary);
     font-size: 13px;
     line-height: 1.5;
-}
-.payment-review-state {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 0;
-    color: #15251d;
-    font-size: 20px;
-    line-height: 1.3;
-}
-.payment-review-state-icon {
-    width: 34px;
-    height: 34px;
-    display: grid;
-    place-items: center;
-    border: 1px solid #c9edda;
-    border-radius: 10px;
-    background: #f0fbf5;
-    color: #00a862;
-    font-size: 17px;
-    font-weight: 800;
-}
-.payment-review-divider {
-    height: 1px;
-    margin: 0 0 20px;
-    background: #edf1ee;
-}
-.payment-review-dialog .manual-tx-form {
-    padding: 22px;
 }
 .payment-review-textarea {
     height: auto;
@@ -1040,29 +983,11 @@ body {
     font-size: 12px;
     line-height: 1.5;
 }
-.payment-review-dialog #paymentReviewEvidence {
-    height: auto;
-    min-height: 70px;
-    padding: 10px;
-    border-style: dashed;
-    background: #fbfdfc;
-}
 .manual-tx-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 10px;
     margin-top: 4px;
-}
-.payment-review-dialog .manual-tx-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    margin-top: 0;
-}
-.payment-review-dialog .manual-tx-cancel {
-    min-width: 88px;
-    height: 44px;
-    padding: 0 18px;
 }
 .manual-tx-cancel,
 .manual-tx-submit {
@@ -1086,15 +1011,6 @@ body {
     color: #fff;
     padding: 0 14px;
 }
-.payment-review-dialog .manual-tx-submit {
-    min-width: 128px;
-    height: 44px;
-    background: #111;
-    box-shadow: 0 5px 13px rgba(17, 17, 17, .18);
-}
-.payment-review-dialog .manual-tx-submit:hover {
-    background: #2b2b2b;
-}
 .manual-tx-submit:disabled { cursor: wait; opacity: .55; }
 .manual-tx-message {
     min-height: 18px;
@@ -1106,14 +1022,48 @@ body {
 }
 .manual-tx-message.error { color: var(--color-danger); }
 .manual-tx-message.success { color: var(--color-accent); }
+.payment-review-dialog .manual-tx-dialog-header {
+    min-height: 60px;
+    padding: 0 20px;
+}
+.payment-review-dialog .manual-tx-dialog-title {
+    font-size: 18px;
+    font-weight: 750;
+}
+.payment-review-dialog .manual-tx-form {
+    padding: 20px;
+}
+.payment-review-dialog #paymentReviewEvidence {
+    height: 46px;
+    min-height: 46px;
+    padding: 9px 10px;
+    border-style: solid;
+    background: #fff;
+}
+.payment-review-dialog .manual-tx-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 4px;
+}
+.payment-review-dialog .manual-tx-actions button {
+    width: 100%;
+    min-width: 0;
+    height: 40px;
+}
+.payment-review-dialog .manual-tx-submit {
+    background: #111;
+    box-shadow: none;
+}
+.payment-review-dialog .manual-tx-submit:hover {
+    background: #292929;
+}
 @media (max-width: 520px) {
     .manual-tx-section { margin-left: 18px; margin-right: 18px; }
     .manual-tx-modal { padding: 18px; }
     .manual-tx-dialog-header { padding-left: 18px; }
     .manual-tx-form { padding: 18px; }
     .payment-review-dialog .manual-tx-form { padding: 18px; }
-    .payment-review-dialog .manual-tx-actions { display: grid; grid-template-columns: 96px minmax(0, 1fr); }
-    .payment-review-dialog .manual-tx-actions button { width: 100%; }
 }
 
 
