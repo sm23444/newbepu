@@ -11,6 +11,7 @@ var migrations = []*gormigrate.Migration{
 	m202607081430DropOrderTradeTypeReselect(),
 	m202608230900PaymentReviewTradeIDNotUnique(),
 	m202608231640CloseCanceledPaymentReviews(),
+	m202608231730NormalizeManualPaymentClaims(),
 }
 
 func Run(db *gorm.DB, initModels []any) error {

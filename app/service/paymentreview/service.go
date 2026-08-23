@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/v03413/bepusdt/app/conf"
 	"github.com/v03413/bepusdt/app/model"
 	"github.com/v03413/bepusdt/app/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const MaxEvidenceSize int64 = 5 << 20
@@ -107,7 +109,7 @@ func Create(input CreateInput) (CreateResult, error) {
 	}
 	if err := model.Db.Transaction(func(tx *gorm.DB) error {
 		var currentOrder model.Order
-		if err := tx.Select("id, status").Where("trade_id = ?", tradeID).First(&currentOrder).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id, status").Where("trade_id = ?", tradeID).First(&currentOrder).Error; err != nil {
 			return ErrReviewUnavailable
 		}
 		if !reviewableOrder(currentOrder) {
@@ -195,26 +197,42 @@ func Resolve(reviewID int64, decision, txHash, note, reviewer string) error {
 		status = model.PaymentReviewApproved
 	}
 	return model.Db.Transaction(func(tx *gorm.DB) error {
+		var lockedOrder model.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("trade_id = ?", review.TradeID).First(&lockedOrder).Error; err != nil {
+			return ErrReviewUnavailable
+		}
 		var locked model.PaymentReview
-		if err := tx.Where("id = ?", reviewID).First(&locked).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", reviewID).First(&locked).Error; err != nil {
 			return err
 		}
 		if locked.Status != model.PaymentReviewPending {
 			return ErrReviewResolved
 		}
 		if status == model.PaymentReviewApproved {
-			if err := approveOrder(tx, locked.TradeID, txHash, now); err != nil {
+			trade, ok := model.GetTradeConfig(lockedOrder.TradeType)
+			if !ok {
+				return ErrReviewUnavailable
+			}
+			txHash = model.NormalizeManualPaymentReference(string(trade.Network), txHash, string(trade.Network) != conf.Solana)
+			if err := approveOrder(tx, lockedOrder, txHash, now); err != nil {
 				return err
 			}
 		}
-		return tx.Model(&model.PaymentReview{}).Where("id = ? AND status = ?", reviewID, model.PaymentReviewPending).
+		updated := tx.Model(&model.PaymentReview{}).Where("id = ? AND status = ?", reviewID, model.PaymentReviewPending).
 			Updates(map[string]any{
 				"status":           status,
 				"transaction_hash": txHash,
 				"resolution_note":  note,
 				"reviewed_by":      reviewer,
 				"reviewed_at":      now,
-			}).Error
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrReviewResolved
+		}
+		return nil
 	})
 }
 
@@ -222,11 +240,7 @@ func Resolve(reviewID int64, decision, txHash, note, reviewer string) error {
 // has already checked the submitted evidence and the provider's own records,
 // so approval must not depend on a live provider scan or on an exact match in
 // the automatic transaction tables.
-func approveOrder(tx *gorm.DB, tradeID, txHash string, at time.Time) error {
-	var order model.Order
-	if err := tx.Where("trade_id = ?", tradeID).First(&order).Error; err != nil {
-		return ErrReviewUnavailable
-	}
+func approveOrder(tx *gorm.DB, order model.Order, txHash string, at time.Time) error {
 	if !reviewableOrder(order) {
 		return ErrReviewUnavailable
 	}
@@ -260,10 +274,15 @@ func claimManualReviewReference(tx *gorm.DB, order model.Order, txHash string) e
 		return ErrReviewUnavailable
 	}
 	network := string(trade.Network)
-	canonicalHash := strings.ToLower(strings.TrimSpace(txHash))
+	caseInsensitive := string(trade.Network) != conf.Solana
+	canonicalHash := model.NormalizeManualPaymentReference(network, txHash, caseInsensitive)
 
 	var claim model.ManualPaymentClaim
-	err := tx.Where("network = ? AND LOWER(tx_hash) = ?", network, canonicalHash).Limit(1).Find(&claim).Error
+	query := tx.Where("network = ? AND tx_hash = ?", network, canonicalHash)
+	if caseInsensitive {
+		query = tx.Where("network = ? AND LOWER(tx_hash) = ?", network, canonicalHash)
+	}
+	err := query.Limit(1).Find(&claim).Error
 	if err != nil {
 		return err
 	}
@@ -288,7 +307,7 @@ func claimManualReviewReference(tx *gorm.DB, order model.Order, txHash string) e
 
 	err = tx.Create(&model.ManualPaymentClaim{
 		Network: network,
-		TxHash:  strings.TrimSpace(txHash),
+		TxHash:  canonicalHash,
 		TradeID: order.TradeId,
 	}).Error
 	if err != nil {

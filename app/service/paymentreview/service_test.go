@@ -308,3 +308,58 @@ func TestManualReviewCannotReuseTransactionReference(t *testing.T) {
 		t.Fatalf("second review status = %s, want pending", persistedReview.Status)
 	}
 }
+
+func TestManualReviewNormalizesEVMReferenceAndPreservesSolanaCase(t *testing.T) {
+	db := setupPaymentReviewTestDB(t)
+	tests := []struct {
+		name      string
+		tradeType model.TradeType
+		inputHash string
+		wantHash  string
+	}{
+		{name: "evm", tradeType: model.UsdtPolygon, inputHash: "0xAbCd", wantHash: "0xabcd"},
+		{name: "solana", tradeType: model.UsdtSolana, inputHash: "AbCd", wantHash: "AbCd"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			order := paymentReviewTestOrder("normalize-"+tt.name, model.OrderStatusWaiting)
+			order.TradeType = tt.tradeType
+			if err := db.Create(&order).Error; err != nil {
+				t.Fatal(err)
+			}
+			review := reviewUpload(t, order.TradeId, "管理员人工核验交易引用并批准入账")
+			if err := Resolve(review.ID, "approve", tt.inputHash, "已人工核验收款记录", "admin"); err != nil {
+				t.Fatalf("approve review: %v", err)
+			}
+			var claim model.ManualPaymentClaim
+			if err := db.Where("trade_id = ?", order.TradeId).First(&claim).Error; err != nil {
+				t.Fatal(err)
+			}
+			if claim.TxHash != tt.wantHash {
+				t.Fatalf("claim hash = %q, want %q", claim.TxHash, tt.wantHash)
+			}
+		})
+	}
+}
+
+func TestSecondReviewDecisionCannotChangeResolvedReview(t *testing.T) {
+	db := setupPaymentReviewTestDB(t)
+	order := paymentReviewTestOrder("resolved-review", model.OrderStatusWaiting)
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	review := reviewUpload(t, order.TradeId, "管理员人工核验后处理复核申请")
+	if err := Resolve(review.ID, "approve", "0xresolved", "已核实收款记录并批准", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Resolve(review.ID, "reject", "", "尝试再次拒绝", "admin"); !errors.Is(err, ErrReviewResolved) {
+		t.Fatalf("second decision error = %v, want %v", err, ErrReviewResolved)
+	}
+	var persisted model.PaymentReview
+	if err := db.First(&persisted, review.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != model.PaymentReviewApproved {
+		t.Fatalf("review status = %s, want approved", persisted.Status)
+	}
+}

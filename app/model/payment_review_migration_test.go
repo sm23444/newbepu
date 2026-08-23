@@ -202,3 +202,38 @@ func TestPaymentReviewMigrationClosesCanceledOrderReviews(t *testing.T) {
 		t.Fatalf("waiting review changed: %+v", waiting)
 	}
 }
+
+func TestManualPaymentClaimMigrationNormalizesNonSolanaReferences(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "manual-payment-claims.db")+"?cache=shared&mode=rwc"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if sqlDB, dbErr := db.DB(); dbErr == nil {
+		t.Cleanup(func() { _ = sqlDB.Close() })
+	}
+	if err := db.AutoMigrate(&ManualPaymentClaim{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]ManualPaymentClaim{
+		{Network: "polygon", TxHash: "0xAbCd", TradeID: "polygon-trade"},
+		{Network: "solana", TxHash: "AbCd", TradeID: "solana-trade"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migration.Run(db, []any{&ManualPaymentClaim{}}); err != nil {
+		t.Fatalf("run migration: %v", err)
+	}
+	var polygon, solana ManualPaymentClaim
+	if err := db.Where("trade_id = ?", "polygon-trade").First(&polygon).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("trade_id = ?", "solana-trade").First(&solana).Error; err != nil {
+		t.Fatal(err)
+	}
+	if polygon.TxHash != "0xabcd" {
+		t.Fatalf("polygon reference = %q, want lowercase", polygon.TxHash)
+	}
+	if solana.TxHash != "AbCd" {
+		t.Fatalf("Solana reference = %q, want original case", solana.TxHash)
+	}
+}
