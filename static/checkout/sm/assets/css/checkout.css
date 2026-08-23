@@ -1059,6 +1059,11 @@ body {
     gap: 12px;
     margin-top: 0;
 }
+.payment-review-dialog .manual-tx-cancel {
+    min-width: 88px;
+    height: 44px;
+    padding: 0 18px;
+}
 .manual-tx-cancel,
 .manual-tx-submit {
     height: 40px;
@@ -1083,6 +1088,7 @@ body {
 }
 .payment-review-dialog .manual-tx-submit {
     min-width: 128px;
+    height: 44px;
     background: #111;
     box-shadow: 0 5px 13px rgba(17, 17, 17, .18);
 }
