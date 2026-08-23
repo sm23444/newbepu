@@ -86,7 +86,7 @@ type Conf struct {
 // administrative configuration read endpoint.
 func IsSensitiveConfKey(key ConfKey) bool {
 	switch key {
-	case AdminPassword, AdminSecret, AdminSecure, ApiAuthToken,
+	case AdminPassword, AdminSecret, ApiAuthToken,
 		ExchangeBinanceAPIKey, ExchangeBinanceSecretKey,
 		ExchangeOKXAPIKey, ExchangeOKXSecretKey, ExchangeOKXPassphrase,
 		RpcEndpointTronGridApiKey, RateSyncCoingeckoApiKey, MqttPass, NotifierParams:

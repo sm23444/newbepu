@@ -342,6 +342,25 @@ func TestManualReviewNormalizesEVMReferenceAndPreservesSolanaCase(t *testing.T) 
 	}
 }
 
+func TestSolanaReviewDoesNotTreatDifferentCaseOrderReferenceAsUsed(t *testing.T) {
+	db := setupPaymentReviewTestDB(t)
+	usedOrder := paymentReviewTestOrder("solana-existing", model.OrderStatusSuccess)
+	usedOrder.TradeType = model.UsdtSolana
+	usedOrder.RefHash = "AbCd"
+	if err := db.Create(&usedOrder).Error; err != nil {
+		t.Fatal(err)
+	}
+	order := paymentReviewTestOrder("solana-new", model.OrderStatusWaiting)
+	order.TradeType = model.UsdtSolana
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	review := reviewUpload(t, order.TradeId, "Solana 交易签名大小写敏感的人工复核")
+	if err := Resolve(review.ID, "approve", "abcd", "已人工核验 Solana 交易", "admin"); err != nil {
+		t.Fatalf("Solana review with different-case reference was rejected: %v", err)
+	}
+}
+
 func TestSecondReviewDecisionCannotChangeResolvedReview(t *testing.T) {
 	db := setupPaymentReviewTestDB(t)
 	order := paymentReviewTestOrder("resolved-review", model.OrderStatusWaiting)

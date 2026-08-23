@@ -294,11 +294,15 @@ func claimManualReviewReference(tx *gorm.DB, order model.Order, txHash string) e
 	}
 
 	var used int64
-	if err := tx.Model(&model.Order{}).
+	orderQuery := tx.Model(&model.Order{}).
 		Where("id <> ? AND status IN (?)", order.ID, []int{model.OrderStatusConfirming, model.OrderStatusSuccess}).
-		Where("trade_type IN (?)", model.GetNetworkTrades(trade.Network)).
-		Where("LOWER(ref_hash) = ?", canonicalHash).
-		Count(&used).Error; err != nil {
+		Where("trade_type IN (?)", model.GetNetworkTrades(trade.Network))
+	if caseInsensitive {
+		orderQuery = orderQuery.Where("LOWER(ref_hash) = ?", canonicalHash)
+	} else {
+		orderQuery = orderQuery.Where("ref_hash = ?", canonicalHash)
+	}
+	if err := orderQuery.Count(&used).Error; err != nil {
 		return err
 	}
 	if used > 0 {
