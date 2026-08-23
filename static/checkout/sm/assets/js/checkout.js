@@ -901,30 +901,17 @@
         var toggle = document.getElementById('paymentReviewToggle');
         var close = document.getElementById('paymentReviewClose');
         var cancel = document.getElementById('paymentReviewCancel');
-        var hash = document.getElementById('paymentReviewHash');
-        var hashLabel = document.getElementById('paymentReviewHashLabel');
         var description = document.getElementById('paymentReviewDescription');
         var evidence = document.getElementById('paymentReviewEvidence');
         var submit = document.getElementById('paymentReviewSubmit');
         var message = document.getElementById('paymentReviewMessage');
-        if (!section || !modal || !form || !toggle || !close || !cancel || !hash || !hashLabel || !description || !evidence || !submit || !message) return;
+        if (!section || !modal || !form || !toggle || !close || !cancel || !description || !evidence || !submit || !message) return;
 
         var available = !!data && data.status !== 2 && data.status !== 4;
         section.hidden = !available;
         if (!available) return;
 
-        var provider = String(data.provider || '').toLowerCase();
-        var tradeType = String(data.trade_type || '').toLowerCase();
-        if (provider === 'okx' || tradeType === 'usdt.okx' || tradeType === 'usdc.okx') {
-            hashLabel.textContent = '交易编号（可选）';
-            hash.placeholder = '请填写 OKX 资金账单中的 Bill ID';
-        } else {
-            hashLabel.textContent = '交易哈希（可选）';
-            hash.placeholder = '请填写区块链交易哈希（TxID）';
-        }
-
         function reset() {
-            hash.value = '';
             description.value = '';
             evidence.value = '';
             message.textContent = '';
@@ -968,7 +955,6 @@
             message.textContent = '正在提交复核...';
             var body = new FormData();
             body.append('trade_id', (orderData && orderData.trade_id) || gTradeId);
-            body.append('transaction_hash', hash.value.trim());
             body.append('description', description.value.trim());
             body.append('evidence', file);
             fetch('/api/v1/pay/payment-review', { method: 'POST', body: body })

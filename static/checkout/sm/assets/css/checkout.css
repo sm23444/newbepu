@@ -900,6 +900,15 @@ body {
     box-shadow: 0 24px 64px rgba(0, 0, 0, .2);
     animation: slideUp .28s cubic-bezier(.34, 1.56, .64, 1);
 }
+.payment-review-dialog {
+    width: min(100%, 474px);
+    border-radius: 20px;
+    overflow: hidden;
+}
+.payment-review-topline {
+    height: 5px;
+    background: #d8e2dc;
+}
 .manual-tx-dialog-header {
     min-height: 60px;
     display: flex;
@@ -908,6 +917,30 @@ body {
     gap: 16px;
     padding: 14px 16px 10px 20px;
     border-bottom: 1px solid var(--color-border);
+}
+.payment-review-header {
+    min-height: 68px;
+    padding: 12px 18px 12px 22px;
+}
+.payment-review-brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+}
+.payment-review-brand-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #17251d;
+}
+.payment-review-brand-name {
+    color: #17251d;
+    font-size: 15px;
+    font-weight: 800;
+}
+.payment-review-support {
+    color: #8a988f;
+    font-size: 12px;
 }
 .manual-tx-dialog-title {
     margin: 0;
@@ -959,11 +992,72 @@ body {
     outline: 2px solid rgba(0, 178, 106, .18);
     border-color: var(--color-accent);
 }
+.payment-review-lead {
+    margin: 8px 0 22px;
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+.payment-review-state {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    color: #15251d;
+    font-size: 20px;
+    line-height: 1.3;
+}
+.payment-review-state-icon {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border: 1px solid #c9edda;
+    border-radius: 10px;
+    background: #f0fbf5;
+    color: #00a862;
+    font-size: 17px;
+    font-weight: 800;
+}
+.payment-review-divider {
+    height: 1px;
+    margin: 0 0 20px;
+    background: #edf1ee;
+}
+.payment-review-dialog .manual-tx-form {
+    padding: 22px;
+}
+.payment-review-textarea {
+    height: auto;
+    min-height: 92px;
+    padding: 10px 12px;
+    line-height: 1.5;
+    resize: vertical;
+}
+.payment-review-hint {
+    margin: -2px 0 16px;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.payment-review-dialog #paymentReviewEvidence {
+    height: auto;
+    min-height: 70px;
+    padding: 10px;
+    border-style: dashed;
+    background: #fbfdfc;
+}
 .manual-tx-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 10px;
     margin-top: 4px;
+}
+.payment-review-dialog .manual-tx-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 0;
 }
 .manual-tx-cancel,
 .manual-tx-submit {
@@ -987,6 +1081,14 @@ body {
     color: #fff;
     padding: 0 14px;
 }
+.payment-review-dialog .manual-tx-submit {
+    min-width: 128px;
+    background: #111;
+    box-shadow: 0 5px 13px rgba(17, 17, 17, .18);
+}
+.payment-review-dialog .manual-tx-submit:hover {
+    background: #2b2b2b;
+}
 .manual-tx-submit:disabled { cursor: wait; opacity: .55; }
 .manual-tx-message {
     min-height: 18px;
@@ -1003,6 +1105,9 @@ body {
     .manual-tx-modal { padding: 18px; }
     .manual-tx-dialog-header { padding-left: 18px; }
     .manual-tx-form { padding: 18px; }
+    .payment-review-dialog .manual-tx-form { padding: 18px; }
+    .payment-review-dialog .manual-tx-actions { display: grid; grid-template-columns: 96px minmax(0, 1fr); }
+    .payment-review-dialog .manual-tx-actions button { width: 100%; }
 }
 
 
