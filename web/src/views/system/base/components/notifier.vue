@@ -20,7 +20,7 @@
             <a-form-item :field="field.key" :label="field.label">
               <a-input
                 v-model="form.notifier_params[field.key]"
-                :placeholder="field.placeholder"
+                :placeholder="notifierConfigured ? '已配置，留空保持不变' : field.placeholder"
                 :type="field.type || 'text'"
                 allow-clear
               />
@@ -144,6 +144,7 @@ const form = ref<FormData>({
 });
 
 const testLoading = ref<boolean>(false);
+const notifierConfigured = ref(false);
 
 const currentChannelFields = computed<FieldConfig[]>(
   () => channelConfigs.find(config => config.value === form.value.notifier_channel)?.fields || []
@@ -157,7 +158,7 @@ const rules = computed(() => {
   };
 
   currentChannelFields.value.forEach(field => {
-    if (field.required) {
+    if (field.required && !notifierConfigured.value) {
       const fieldPath = `notifier_params.${field.key}`;
       const fieldRules: any[] = [{ required: true, message: field.message }];
 
@@ -185,6 +186,7 @@ const initParams = (): Record<string, string> => {
 };
 
 const onChannelChange = (): void => {
+  notifierConfigured.value = false;
   form.value.notifier_params = initParams();
 };
 
@@ -253,7 +255,11 @@ watch(
     if (data.value) {
       form.value.notifier_channel = String(data.value.notifier_channel || "telegram");
 
-      if (data.value.notifier_params) {
+      if (data.value.notifier_params === "[已配置]") {
+        notifierConfigured.value = true;
+        form.value.notifier_params = initParams();
+      } else if (data.value.notifier_params) {
+        notifierConfigured.value = false;
         try {
           const params =
             typeof data.value.notifier_params === "string" ? JSON.parse(data.value.notifier_params) : data.value.notifier_params;
@@ -269,6 +275,7 @@ watch(
           form.value.notifier_params = initParams();
         }
       } else {
+        notifierConfigured.value = false;
         form.value.notifier_params = initParams();
       }
     }

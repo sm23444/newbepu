@@ -176,7 +176,10 @@ func (Wallet) Del(ctx *gin.Context) {
 		return
 	}
 
-	model.Db.Where("id = ?", req.ID).Delete(&model.Wallet{})
+	if err := model.Db.Where("id = ?", req.ID).Delete(&model.Wallet{}).Error; err != nil {
+		base.Error(ctx, err)
+		return
+	}
 
 	base.Response(ctx, 200, "删除成功")
 }

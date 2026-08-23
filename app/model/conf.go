@@ -82,6 +82,20 @@ type Conf struct {
 	V string  `gorm:"column:v;type:varchar(512);not null" json:"val"`
 }
 
+// IsSensitiveConfKey identifies values that must never be returned by an
+// administrative configuration read endpoint.
+func IsSensitiveConfKey(key ConfKey) bool {
+	switch key {
+	case AdminPassword, AdminSecret, AdminSecure, ApiAuthToken,
+		ExchangeBinanceAPIKey, ExchangeBinanceSecretKey,
+		ExchangeOKXAPIKey, ExchangeOKXSecretKey, ExchangeOKXPassphrase,
+		RpcEndpointTronGridApiKey, RateSyncCoingeckoApiKey, MqttPass, NotifierParams:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c Conf) TableName() string {
 
 	return "bep_conf"

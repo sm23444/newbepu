@@ -28,6 +28,8 @@ type confGetsReq struct {
 
 type confSetsReq []confReq
 
+const maskedConfValue = "[已配置]"
+
 func validPublicURLSetting(key model.ConfKey, value string) bool {
 	return key != model.PaymentSupportUrl || value == "" || utils.IsAllowedHTTPSURL(value)
 }
@@ -47,6 +49,7 @@ func (Conf) Set(ctx *gin.Context) {
 
 	key := model.ConfKey(strings.TrimSpace(req.Key))
 	value := strings.TrimSpace(req.Value)
+	value = preserveMaskedConfValue(key, value)
 	if !validPublicURLSetting(key, value) {
 		base.BadRequest(ctx, "payment_support_url must be a valid HTTPS URL")
 		return
@@ -68,7 +71,8 @@ func (Conf) Get(ctx *gin.Context) {
 		return
 	}
 
-	base.Ok(ctx, gin.H{"key": req.Key, "value": model.GetK(model.ConfKey(req.Key))})
+	key := model.ConfKey(strings.TrimSpace(req.Key))
+	base.Ok(ctx, gin.H{"key": key, "value": safeConfValue(key, model.GetK(key))})
 }
 
 func (Conf) Del(ctx *gin.Context) {
@@ -107,7 +111,7 @@ func (Conf) Gets(ctx *gin.Context) {
 
 	var data = gin.H{}
 	for _, item := range items {
-		data[string(item.K)] = item.V
+		data[string(item.K)] = safeConfValue(item.K, item.V)
 	}
 
 	base.Ok(ctx, data)
@@ -126,6 +130,7 @@ func (Conf) Sets(ctx *gin.Context) {
 	for _, item := range req {
 		key := model.ConfKey(strings.TrimSpace(item.Key))
 		value := strings.TrimSpace(item.Value)
+		value = preserveMaskedConfValue(key, value)
 		if !validPublicURLSetting(key, value) {
 			base.BadRequest(ctx, "payment_support_url must be a valid HTTPS URL")
 			return
@@ -175,13 +180,27 @@ func (Conf) Rpc(ctx *gin.Context) {
 		return
 	}
 	for _, item := range items {
-		rpc[item.K] = item.V
+		rpc[item.K] = safeConfValue(item.K, item.V)
 	}
 
 	base.Ok(ctx, gin.H{
 		"rpc":   rpc,
 		"stats": conf.GetStats(),
 	})
+}
+
+func safeConfValue(key model.ConfKey, value string) string {
+	if model.IsSensitiveConfKey(key) && strings.TrimSpace(value) != "" {
+		return maskedConfValue
+	}
+	return value
+}
+
+func preserveMaskedConfValue(key model.ConfKey, value string) string {
+	if model.IsSensitiveConfKey(key) && value == maskedConfValue {
+		return model.GetK(key)
+	}
+	return value
 }
 
 func (Conf) Notifier(ctx *gin.Context) {
@@ -194,12 +213,40 @@ func (Conf) Notifier(ctx *gin.Context) {
 
 	var keys = []string{string(model.NotifierChannel), string(model.NotifierParams)}
 	if err := model.Db.Transaction(func(tx *gorm.DB) error {
+		var existing []model.Conf
+		if err := tx.Where("k IN ?", keys).Find(&existing).Error; err != nil {
+			return err
+		}
+		current := make(map[model.ConfKey]string, len(existing))
+		for _, item := range existing {
+			current[item.K] = item.V
+		}
+		params := req.Params
+		if req.Channel == current[model.NotifierChannel] && current[model.NotifierParams] != "" {
+			var submitted map[string]string
+			if err := json.Unmarshal(req.Params, &submitted); err != nil {
+				return err
+			}
+			var stored map[string]string
+			if err := json.Unmarshal([]byte(current[model.NotifierParams]), &stored); err == nil {
+				if stored == nil {
+					stored = make(map[string]string)
+				}
+				for key, value := range submitted {
+					value = strings.TrimSpace(value)
+					if value != "" && value != maskedConfValue {
+						stored[key] = value
+					}
+				}
+				params = mustJSON(stored)
+			}
+		}
 		if err := tx.Where("k IN ?", keys).Delete(&model.Conf{}).Error; err != nil {
 			return err
 		}
 		return tx.Create(&[]model.Conf{
 			{K: model.NotifierChannel, V: req.Channel},
-			{K: model.NotifierParams, V: string(req.Params)},
+			{K: model.NotifierParams, V: string(mustJSON(params))},
 		}).Error
 	}); err != nil {
 		base.Error(ctx, err)
@@ -211,6 +258,14 @@ func (Conf) Notifier(ctx *gin.Context) {
 	}
 
 	base.Ok(ctx, "配置成功")
+}
+
+func mustJSON(value any) json.RawMessage {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return json.RawMessage(data)
 }
 
 func (Conf) NotifierTest(ctx *gin.Context) {

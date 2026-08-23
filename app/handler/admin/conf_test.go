@@ -28,3 +28,23 @@ func TestValidPublicURLSetting(t *testing.T) {
 		})
 	}
 }
+
+func TestSensitiveConfigurationValuesAreMasked(t *testing.T) {
+	tests := []struct {
+		key      model.ConfKey
+		value    string
+		wantSafe string
+	}{
+		{key: model.ApiAuthToken, value: "token-value", wantSafe: maskedConfValue},
+		{key: model.ExchangeOKXSecretKey, value: "secret-value", wantSafe: maskedConfValue},
+		{key: model.RpcEndpointTronGridApiKey, value: "rpc-key", wantSafe: maskedConfValue},
+		{key: model.PaymentTimeout, value: "1200", wantSafe: "1200"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.key), func(t *testing.T) {
+			if got := safeConfValue(tt.key, tt.value); got != tt.wantSafe {
+				t.Fatalf("safeConfValue(%q) = %q, want %q", tt.key, got, tt.wantSafe)
+			}
+		})
+	}
+}
