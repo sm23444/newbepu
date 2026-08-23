@@ -33,7 +33,9 @@
             </template>
           </a-table-column>
           <a-table-column :title="reviewStatus === 'pending' ? '申请时间' : '处理时间'" :width="180">
-            <template #cell="{ record }">{{ reviewStatus === "pending" ? record.created_at : record.reviewed_at || "-" }}</template>
+            <template #cell="{ record }">
+              {{ formatReviewTime(reviewStatus === "pending" ? record.created_at : record.reviewed_at) }}
+            </template>
           </a-table-column>
           <a-table-column title="操作" :width="90" fixed="right">
             <template #cell="{ record }">
@@ -69,7 +71,7 @@
         {{ reviewerText(reviewDetail.reviewed_by) }}
       </a-descriptions-item>
       <a-descriptions-item v-if="reviewDetail.status !== 'pending'" label="处理时间">
-        {{ reviewDetail.reviewed_at || "-" }}
+        {{ formatReviewTime(reviewDetail.reviewed_at) }}
       </a-descriptions-item>
     </a-descriptions>
 
@@ -94,6 +96,7 @@
 import { Notification } from "@arco-design/web-vue";
 import { reviewDetailAPI, reviewListAPI, reviewResolveAPI } from "@/api/modules/review/index";
 import { useLayoutModel } from "@/hooks/useLayoutModel";
+import { formatReviewTime } from "./time";
 
 const { dialogWidth } = useLayoutModel();
 const reviewStatus = ref("pending");
