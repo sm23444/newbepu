@@ -311,6 +311,80 @@ func TestMarkConfirmingRejectsCanceledOrder(t *testing.T) {
 	}
 }
 
+func TestSetCanceledClosesPendingPaymentReview(t *testing.T) {
+	db := newTestDB(t, "cancel-closes-payment-review")
+	if err := db.AutoMigrate(&PaymentReview{}); err != nil {
+		t.Fatalf("migrate payment review: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	zero := time.Unix(0, 0)
+	order := Order{
+		OrderId: "cancel-review-order", TradeId: "cancel-review-trade", TradeType: UsdtTrc20,
+		Status: OrderStatusWaiting, Rate: "7", Amount: "1", Money: "7", Address: "addr", MatchAddress: "addr",
+		ExpiredAt: now.Add(time.Hour), ConfirmedAt: &zero,
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	pending := PaymentReview{
+		TradeID: order.TradeId, Status: PaymentReviewPending, TransactionHash: "pending-hash", Description: "pending review",
+		EvidencePath: "pending.png", EvidenceType: "image/png", EvidenceSize: 1, EvidenceSHA256: "pending-sha",
+	}
+	if err := db.Create(&pending).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := order.SetCanceled(); err != nil {
+		t.Fatalf("cancel order: %v", err)
+	}
+	var review PaymentReview
+	if err := db.First(&review, pending.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if review.Status != PaymentReviewRejected || review.ReviewedBy != "system" || review.ResolutionNote != "订单已取消，系统自动关闭复核" || review.ReviewedAt == nil {
+		t.Fatalf("closed review = %+v", review)
+	}
+}
+
+func TestSetCanceledRollsBackWhenReviewClosureFails(t *testing.T) {
+	db := newTestDB(t, "cancel-review-rollback")
+	if err := db.AutoMigrate(&PaymentReview{}); err != nil {
+		t.Fatalf("migrate payment review: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	zero := time.Unix(0, 0)
+	order := Order{
+		OrderId: "cancel-rollback-order", TradeId: "cancel-rollback-trade", TradeType: UsdtTrc20,
+		Status: OrderStatusWaiting, Rate: "7", Amount: "1", Money: "7", Address: "addr", MatchAddress: "addr",
+		ExpiredAt: now.Add(time.Hour), ConfirmedAt: &zero,
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&PaymentReview{
+		TradeID: order.TradeId, Status: PaymentReviewPending, TransactionHash: "rollback-hash", Description: "rollback review",
+		EvidencePath: "rollback.png", EvidenceType: "image/png", EvidenceSize: 1, EvidenceSHA256: "rollback-sha",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TRIGGER reject_payment_review_update
+        BEFORE UPDATE ON bep_payment_review
+        BEGIN SELECT RAISE(ABORT, 'forced review closure failure'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := order.SetCanceled(); err == nil {
+		t.Fatal("expected cancellation to fail")
+	}
+	var persisted Order
+	if err := db.First(&persisted, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != OrderStatusWaiting {
+		t.Fatalf("order status = %d, want waiting after rollback", persisted.Status)
+	}
+}
+
 func stateGuardOrder(now time.Time, status int, refHash string) Order {
 	createdAt := now.Add(-10 * time.Minute)
 	updatedAt := createdAt

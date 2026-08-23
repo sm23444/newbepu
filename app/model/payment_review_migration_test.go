@@ -156,3 +156,49 @@ func TestPaymentReviewMigrationRollsBackDDLFailure(t *testing.T) {
 		t.Fatal("failed migration was incorrectly recorded as completed")
 	}
 }
+
+func TestPaymentReviewMigrationClosesCanceledOrderReviews(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "canceled-review-migration.db")+"?cache=shared&mode=rwc"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if sqlDB, dbErr := db.DB(); dbErr == nil {
+		t.Cleanup(func() { _ = sqlDB.Close() })
+	}
+	if err := db.AutoMigrate(&Order{}, &PaymentReview{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	zero := time.Unix(0, 0)
+	orders := []Order{
+		{OrderId: "canceled-order", TradeId: "canceled-trade", TradeType: UsdtTrc20, Status: OrderStatusCanceled, Rate: "7", Amount: "1", Money: "7", Address: "a", MatchAddress: "a", ExpiredAt: now, ConfirmedAt: &zero},
+		{OrderId: "waiting-order", TradeId: "waiting-trade", TradeType: UsdtTrc20, Status: OrderStatusWaiting, Rate: "7", Amount: "1", Money: "7", Address: "b", MatchAddress: "b", ExpiredAt: now.Add(time.Hour), ConfirmedAt: &zero},
+	}
+	if err := db.Create(&orders).Error; err != nil {
+		t.Fatal(err)
+	}
+	reviews := []PaymentReview{
+		{TradeID: "canceled-trade", Status: PaymentReviewPending, TransactionHash: "canceled-hash", Description: "canceled review", EvidencePath: "a.png", EvidenceType: "image/png", EvidenceSize: 1, EvidenceSHA256: "sha-a"},
+		{TradeID: "waiting-trade", Status: PaymentReviewPending, TransactionHash: "waiting-hash", Description: "waiting review", EvidencePath: "b.png", EvidenceType: "image/png", EvidenceSize: 1, EvidenceSHA256: "sha-b"},
+	}
+	if err := db.Create(&reviews).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migration.Run(db, []any{&Order{}, &PaymentReview{}}); err != nil {
+		t.Fatalf("run migration: %v", err)
+	}
+	var canceled, waiting PaymentReview
+	if err := db.First(&canceled, reviews[0].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&waiting, reviews[1].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if canceled.Status != PaymentReviewRejected || canceled.ReviewedBy != "system" || canceled.ReviewedAt == nil {
+		t.Fatalf("canceled review = %+v", canceled)
+	}
+	if waiting.Status != PaymentReviewPending || waiting.ReviewedAt != nil {
+		t.Fatalf("waiting review changed: %+v", waiting)
+	}
+}

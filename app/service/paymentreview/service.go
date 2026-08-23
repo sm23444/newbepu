@@ -106,6 +106,13 @@ func Create(input CreateInput) (CreateResult, error) {
 		EvidenceSHA256:  hex.EncodeToString(digest[:]),
 	}
 	if err := model.Db.Transaction(func(tx *gorm.DB) error {
+		var currentOrder model.Order
+		if err := tx.Select("id, status").Where("trade_id = ?", tradeID).First(&currentOrder).Error; err != nil {
+			return ErrReviewUnavailable
+		}
+		if !reviewableOrder(currentOrder) {
+			return ErrReviewUnavailable
+		}
 		var count int64
 		if err := tx.Model(&model.PaymentReview{}).
 			Where("trade_id = ? AND status = ?", tradeID, model.PaymentReviewPending).

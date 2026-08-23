@@ -68,6 +68,17 @@ func TestAdminListBindsJSONPaginationAndStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for i := 0; i < 2; i++ {
+		tradeID := "approved-" + string(rune('a'+i))
+		if err := db.Create(&model.PaymentReview{
+			TradeID: tradeID, Status: model.PaymentReviewApproved, Description: "approved review description",
+			EvidencePath: "/tmp/evidence", EvidenceType: "image/png", EvidenceSize: 10, EvidenceSHA256: strings.Repeat("c", 64),
+			ReviewedBy: "admin", ReviewedAt: &now,
+			AutoTimeAt: model.AutoTimeAt{CreatedAt: (*model.Datetime)(&now), UpdatedAt: (*model.Datetime)(&now)},
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	gin.SetMode(gin.TestMode)
 	request := httptest.NewRequest("POST", "/api/review/list", strings.NewReader(`{"page":2,"size":10,"status":"pending"}`))
@@ -91,6 +102,29 @@ func TestAdminListBindsJSONPaginationAndStatus(t *testing.T) {
 	for _, item := range response.Data {
 		if item["status"] != model.PaymentReviewPending {
 			t.Fatalf("non-pending row returned: %#v", item)
+		}
+	}
+
+	request = httptest.NewRequest("POST", "/api/review/list", strings.NewReader(`{"page":1,"size":20,"status":"resolved"}`))
+	request.Header.Set("Content-Type", "application/json")
+	writer = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(writer)
+	ctx.Request = request
+	(PaymentReview{}).AdminList(ctx)
+	response = struct {
+		Code  int              `json:"code"`
+		Total int64            `json:"total"`
+		Data  []map[string]any `json:"data"`
+	}{}
+	if err := json.Unmarshal(writer.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode resolved response %q: %v", writer.Body.String(), err)
+	}
+	if response.Code != 200 || response.Total != 5 || len(response.Data) != 5 {
+		t.Fatalf("resolved response = code %d total %d data %d, want 200/5/5", response.Code, response.Total, len(response.Data))
+	}
+	for _, item := range response.Data {
+		if item["status"] == model.PaymentReviewPending {
+			t.Fatalf("pending row returned in history: %#v", item)
 		}
 	}
 }

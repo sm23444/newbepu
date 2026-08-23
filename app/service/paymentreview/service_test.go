@@ -124,6 +124,52 @@ func TestPendingReviewIsStillRejectedAsDuplicate(t *testing.T) {
 	}
 }
 
+func TestReviewSubmissionRejectsOrderCanceledAfterInitialCheck(t *testing.T) {
+	db := setupPaymentReviewTestDB(t)
+	order := paymentReviewTestOrder("cancel-during-review", model.OrderStatusWaiting)
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	canceled := false
+	if err := db.Callback().Query().After("gorm:query").Register("test:cancel_after_initial_review_check", func(tx *gorm.DB) {
+		if canceled || tx.Statement.Table != "bep_order" {
+			return
+		}
+		canceled = true
+		if err := db.Model(&model.Order{}).Where("id = ?", order.ID).Update("status", model.OrderStatusCanceled).Error; err != nil {
+			t.Errorf("cancel order during review submission: %v", err)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("trade_id", order.TradeId)
+	_ = writer.WriteField("description", "提交复核期间订单已被管理员取消")
+	part, _ := writer.CreateFormFile("evidence", "payment.png")
+	_, _ = part.Write([]byte("\x89PNG\r\n\x1a\nreview"))
+	_ = writer.Close()
+	req := httptest.NewRequest("POST", "/", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	_ = req.ParseMultipartForm(1 << 20)
+	file, header, _ := req.FormFile("evidence")
+	_ = file.Close()
+	_, err := Create(CreateInput{
+		TradeID: order.TradeId, TransactionHash: "canceled-transaction", Description: req.PostFormValue("description"), File: header,
+	})
+	if !errors.Is(err, ErrReviewUnavailable) {
+		t.Fatalf("create error = %v, want %v", err, ErrReviewUnavailable)
+	}
+	var count int64
+	if err := db.Model(&model.PaymentReview{}).Where("trade_id = ?", order.TradeId).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("pending review count = %d, want 0", count)
+	}
+}
+
 func TestFailedOrderCanBeSubmittedAndApprovedForManualReview(t *testing.T) {
 	db := setupPaymentReviewTestDB(t)
 	order := paymentReviewTestOrder("failed-manual-review", model.OrderStatusFailed)

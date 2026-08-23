@@ -83,7 +83,9 @@ func (PaymentReview) AdminList(ctx *gin.Context) {
 		size = 20
 	}
 	query := model.Db.Model(&model.PaymentReview{})
-	if status != "" {
+	if status == "resolved" {
+		query = query.Where("status IN (?)", []string{model.PaymentReviewApproved, model.PaymentReviewRejected})
+	} else if status != "" {
 		query = query.Where("status = ?", status)
 	}
 	var total int64
