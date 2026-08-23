@@ -134,8 +134,8 @@ test('manual review requires and submits a transaction reference', () => {
 
 test('checkout script cache key matches its content hash', () => {
     const html = fs.readFileSync(path.join(__dirname, 'views/checkout.html'), 'utf8');
-    const script = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'));
-    const contentHash = crypto.createHash('sha256').update(script).digest('hex').slice(0, 12);
+    const script = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'), 'utf8').replace(/\r\n/g, '\n');
+    const contentHash = crypto.createHash('sha256').update(script, 'utf8').digest('hex').slice(0, 12);
 
     assert.match(html, new RegExp('checkout\\.js\\?v=' + contentHash));
 });
