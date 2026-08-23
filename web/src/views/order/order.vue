@@ -212,7 +212,7 @@
       </a-form-item>
       <a-space>
         <a-button status="danger" :loading="reviewResolving" @click="resolveReview('reject')">拒绝</a-button>
-        <a-button type="primary" :loading="reviewResolving" @click="resolveReview('approve')">批准并入账</a-button>
+        <a-button type="primary" :loading="reviewResolving" @click="resolveReview('approve')">人工核实后批准入账</a-button>
       </a-space>
     </a-form>
   </a-modal>
@@ -275,7 +275,7 @@ const resolveReview = async (decision: "approve" | "reject") => {
     return;
   }
   if (decision === "approve" && !reviewForm.transaction_hash.trim()) {
-    Notification.warning("批准时必须填写交易编号");
+    Notification.warning("批准时必须有交易编号或交易哈希");
     return;
   }
   reviewResolving.value = true;

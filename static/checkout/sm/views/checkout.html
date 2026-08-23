@@ -188,6 +188,8 @@
             <p class="payment-review-lead">请提供付款说明和截图，人工将根据当前订单核验交易</p>
             <label class="manual-tx-label" for="paymentReviewDescription">付款说明</label>
             <textarea class="manual-tx-input payment-review-textarea" id="paymentReviewDescription" maxlength="1000" minlength="10" rows="4" placeholder="请说明付款时间、付款方式，并填写有助于查找转账的信息（至少10个字）"></textarea>
+            <label class="manual-tx-label" for="paymentReviewTransactionHash">交易编号 / 交易哈希</label>
+            <input class="manual-tx-input" id="paymentReviewTransactionHash" type="text" maxlength="256" placeholder="OKX/币安填写 Bill ID，链上填写交易哈希" required>
             <label class="manual-tx-label" for="paymentReviewEvidence">付款截图</label>
             <input class="manual-tx-input" id="paymentReviewEvidence" type="file" accept="image/jpeg,image/png,image/webp">
             <p class="payment-review-hint">仅支持 JPEG、PNG 或 WebP，最大 5 MiB。请勿包含密码或助记词</p>

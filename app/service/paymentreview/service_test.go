@@ -2,7 +2,6 @@ package paymentreview
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"mime/multipart"
 	"net/http/httptest"
@@ -12,9 +11,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
-	"github.com/shopspring/decimal"
 	"github.com/v03413/bepusdt/app/model"
-	"github.com/v03413/bepusdt/app/task"
 	"gorm.io/gorm"
 )
 
@@ -30,9 +27,7 @@ func setupPaymentReviewTestDB(t *testing.T) *gorm.DB {
 	previousDB := model.Db
 	model.Db = db
 	t.Setenv("BEPUSDT_PAYMENT_REVIEW_DIR", t.TempDir())
-	previousVerifier := verifyManualPayment
 	t.Cleanup(func() {
-		verifyManualPayment = previousVerifier
 		model.Db = previousDB
 		if sqlDB, dbErr := db.DB(); dbErr == nil {
 			_ = sqlDB.Close()
@@ -81,7 +76,7 @@ func reviewUpload(t *testing.T, tradeID, description string) CreateResult {
 		t.Fatal(err)
 	}
 	_ = file.Close()
-	result, err := Create(CreateInput{TradeID: tradeID, Description: description, File: header})
+	result, err := Create(CreateInput{TradeID: tradeID, TransactionHash: "submitted-" + tradeID, Description: description, File: header})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,13 +118,13 @@ func TestPendingReviewIsStillRejectedAsDuplicate(t *testing.T) {
 	_ = req.ParseMultipartForm(1 << 20)
 	file, header, _ := req.FormFile("evidence")
 	_ = file.Close()
-	_, err := Create(CreateInput{TradeID: order.TradeId, Description: req.PostFormValue("description"), File: header})
+	_, err := Create(CreateInput{TradeID: order.TradeId, TransactionHash: "second-submission", Description: req.PostFormValue("description"), File: header})
 	if !errors.Is(err, ErrReviewExists) {
 		t.Fatalf("expected duplicate pending error, got %v", err)
 	}
 }
 
-func TestChainReviewApprovalIsAtomic(t *testing.T) {
+func TestManualReviewApprovalStoresHashAndMarksOrderSuccess(t *testing.T) {
 	db := setupPaymentReviewTestDB(t)
 	order := paymentReviewTestOrder("chain-review", model.OrderStatusWaiting)
 	if err := db.Create(&order).Error; err != nil {
@@ -137,9 +132,6 @@ func TestChainReviewApprovalIsAtomic(t *testing.T) {
 	}
 	reviewID := reviewUpload(t, order.TradeId, "链上转账已完成但订单没有到账")
 	txHash := "0x" + "a1" + strings.Repeat("0", 62)
-	verifyManualPayment = func(context.Context, *model.Order, string) (task.ManualPaymentVerification, error) {
-		return task.ManualPaymentVerification{Network: "polygon", TxHash: txHash, Amount: decimal.NewFromInt(10), FromAddress: "0x2222222222222222222222222222222222222222", RecvAddress: order.MatchAddress, Timestamp: time.Now(), TradeType: order.TradeType, BlockNum: 99}, nil
-	}
 	if err := Resolve(reviewID.ID, "approve", txHash, "链上交易已核验", "admin"); err != nil {
 		t.Fatalf("approve review: %v", err)
 	}
@@ -150,38 +142,36 @@ func TestChainReviewApprovalIsAtomic(t *testing.T) {
 	if persisted.Status != model.OrderStatusSuccess || persisted.RefHash != txHash {
 		t.Fatalf("order = status %d ref %s", persisted.Status, persisted.RefHash)
 	}
-	var claimCount int64
-	if err := db.Model(&model.ManualPaymentClaim{}).Where("trade_id = ?", order.TradeId).Count(&claimCount).Error; err != nil {
+	var persistedReview model.PaymentReview
+	if err := db.First(&persistedReview, reviewID.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if claimCount != 1 {
-		t.Fatalf("claim count = %d, want 1", claimCount)
+	if persistedReview.Status != model.PaymentReviewApproved || persistedReview.TransactionHash != txHash {
+		t.Fatalf("review = status %s hash %q, want approved/%q", persistedReview.Status, persistedReview.TransactionHash, txHash)
 	}
 }
 
-func TestChainReviewVerificationFailureDoesNotChangeState(t *testing.T) {
+func TestManualReviewApprovalDoesNotRequireAutomaticTransactionMatch(t *testing.T) {
 	db := setupPaymentReviewTestDB(t)
 	order := paymentReviewTestOrder("chain-review-fail", model.OrderStatusWaiting)
 	if err := db.Create(&order).Error; err != nil {
 		t.Fatal(err)
 	}
 	reviewID := reviewUpload(t, order.TradeId, "链上转账已完成但订单没有到账")
-	verifyManualPayment = func(context.Context, *model.Order, string) (task.ManualPaymentVerification, error) {
-		return task.ManualPaymentVerification{}, errors.New("transaction mismatch")
-	}
-	if err := Resolve(reviewID.ID, "approve", "0x"+strings.Repeat("b", 64), "人工核验失败", "admin"); !errors.Is(err, ErrReviewTxMismatch) {
-		t.Fatalf("expected mismatch, got %v", err)
+	txHash := "bill-or-hash-not-in-automatic-scan"
+	if err := Resolve(reviewID.ID, "approve", txHash, "已通过区块浏览器和收款记录人工核验", "admin"); err != nil {
+		t.Fatalf("manual approval should not require automatic match: %v", err)
 	}
 	var persisted model.PaymentReview
 	if err := db.First(&persisted, reviewID.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Status != model.PaymentReviewPending {
-		t.Fatalf("review status = %s, want pending", persisted.Status)
+	if persisted.Status != model.PaymentReviewApproved || persisted.TransactionHash != txHash {
+		t.Fatalf("review = status %s hash %q, want approved/%q", persisted.Status, persisted.TransactionHash, txHash)
 	}
 }
 
-func TestChainReviewApprovalRollsBackClaimWhenOrderUpdateFails(t *testing.T) {
+func TestManualReviewApprovalDoesNotParseOrderRate(t *testing.T) {
 	db := setupPaymentReviewTestDB(t)
 	order := paymentReviewTestOrder("chain-review-rollback", model.OrderStatusWaiting)
 	order.AddressLocked = true
@@ -191,24 +181,65 @@ func TestChainReviewApprovalRollsBackClaimWhenOrderUpdateFails(t *testing.T) {
 	}
 	reviewID := reviewUpload(t, order.TradeId, "链上转账已完成但订单没有到账")
 	txHash := "0x" + strings.Repeat("c", 64)
-	verifyManualPayment = func(context.Context, *model.Order, string) (task.ManualPaymentVerification, error) {
-		return task.ManualPaymentVerification{Network: "polygon", TxHash: txHash, Amount: decimal.NewFromInt(10), FromAddress: "0x2222222222222222222222222222222222222222", Timestamp: time.Now(), TradeType: order.TradeType, BlockNum: 100}, nil
+	if err := Resolve(reviewID.ID, "approve", txHash, "已人工核验收款记录", "admin"); err != nil {
+		t.Fatalf("manual approval should not parse order rate: %v", err)
 	}
-	if err := Resolve(reviewID.ID, "approve", txHash, "链上交易已核验", "admin"); err == nil {
-		t.Fatal("expected approval to fail for invalid order rate")
-	}
-	var persisted model.PaymentReview
-	if err := db.First(&persisted, reviewID.ID).Error; err != nil {
+	var persisted model.Order
+	if err := db.First(&persisted, order.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Status != model.PaymentReviewPending {
-		t.Fatalf("review status = %s, want pending", persisted.Status)
+	if persisted.Status != model.OrderStatusSuccess || persisted.RefHash != txHash {
+		t.Fatalf("order = status %d hash %q, want success/%q", persisted.Status, persisted.RefHash, txHash)
 	}
-	var claimCount int64
-	if err := db.Model(&model.ManualPaymentClaim{}).Where("trade_id = ?", order.TradeId).Count(&claimCount).Error; err != nil {
+}
+
+func TestManualExchangeReviewApprovalDoesNotRequireScannedBill(t *testing.T) {
+	db := setupPaymentReviewTestDB(t)
+	order := paymentReviewTestOrder("okx-manual-review", model.OrderStatusWaiting)
+	order.TradeType = model.UsdtOKX
+	order.Address = "604336395154821439"
+	order.MatchAddress = order.Address
+	if err := db.Create(&order).Error; err != nil {
 		t.Fatal(err)
 	}
-	if claimCount != 0 {
-		t.Fatalf("claim count = %d, want 0 after rollback", claimCount)
+	reviewID := reviewUpload(t, order.TradeId, "已完成欧易内部转账并提交付款截图")
+	billID := "104278866690"
+	if err := Resolve(reviewID.ID, "approve", billID, "已在欧易资金账单和收款余额中人工核实", "admin"); err != nil {
+		t.Fatalf("approve unscanned OKX bill: %v", err)
+	}
+	var persisted model.Order
+	if err := db.First(&persisted, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != model.OrderStatusSuccess || persisted.RefHash != billID || persisted.FromAddress != "manual-review" {
+		t.Fatalf("order = status %d hash %q from %q", persisted.Status, persisted.RefHash, persisted.FromAddress)
+	}
+}
+
+func TestManualReviewCannotReuseTransactionReference(t *testing.T) {
+	db := setupPaymentReviewTestDB(t)
+	first := paymentReviewTestOrder("manual-review-first", model.OrderStatusWaiting)
+	second := paymentReviewTestOrder("manual-review-second", model.OrderStatusWaiting)
+	if err := db.Create(&first).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&second).Error; err != nil {
+		t.Fatal(err)
+	}
+	firstReview := reviewUpload(t, first.TradeId, "第一笔订单已经人工核实付款记录")
+	secondReview := reviewUpload(t, second.TradeId, "第二笔订单申请使用同一付款记录")
+	txHash := "0x" + strings.Repeat("d", 64)
+	if err := Resolve(firstReview.ID, "approve", txHash, "第一笔人工核实通过", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Resolve(secondReview.ID, "approve", txHash, "第二笔人工核实通过", "admin"); !errors.Is(err, ErrReviewTxUsed) {
+		t.Fatalf("reuse error = %v, want %v", err, ErrReviewTxUsed)
+	}
+	var persistedReview model.PaymentReview
+	if err := db.First(&persistedReview, secondReview.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persistedReview.Status != model.PaymentReviewPending {
+		t.Fatalf("second review status = %s, want pending", persistedReview.Status)
 	}
 }

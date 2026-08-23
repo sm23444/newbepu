@@ -1,7 +1,6 @@
 package paymentreview
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,9 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shopspring/decimal"
 	"github.com/v03413/bepusdt/app/model"
-	"github.com/v03413/bepusdt/app/task"
 	"github.com/v03413/bepusdt/app/utils"
 	"gorm.io/gorm"
 )
@@ -23,14 +20,12 @@ import (
 const MaxEvidenceSize int64 = 5 << 20
 
 var (
-	ErrInvalidReview       = errors.New("付款复核资料无效")
-	ErrReviewUnavailable   = errors.New("当前订单不允许申请付款复核")
-	ErrReviewExists        = errors.New("该订单已有待处理的付款复核")
-	ErrReviewNotFound      = errors.New("付款复核不存在")
-	ErrReviewResolved      = errors.New("付款复核已经处理")
-	ErrReviewTxNotFound    = errors.New("未找到匹配的交易记录")
-	ErrReviewTxMismatch    = errors.New("交易记录与订单不匹配")
-	ErrReviewTxUnavailable = errors.New("交易验证暂时不可用")
+	ErrInvalidReview     = errors.New("付款复核资料无效")
+	ErrReviewUnavailable = errors.New("当前订单不允许申请付款复核")
+	ErrReviewExists      = errors.New("该订单已有待处理的付款复核")
+	ErrReviewNotFound    = errors.New("付款复核不存在")
+	ErrReviewResolved    = errors.New("付款复核已经处理")
+	ErrReviewTxUsed      = errors.New("该交易编号已用于其他订单")
 )
 
 type CreateInput struct {
@@ -47,13 +42,11 @@ type CreateResult struct {
 	CreatedAt string `json:"created_at"`
 }
 
-var verifyManualPayment = task.VerifyManualPayment
-
 func Create(input CreateInput) (CreateResult, error) {
 	tradeID := strings.TrimSpace(input.TradeID)
 	description := strings.TrimSpace(input.Description)
 	txHash := strings.TrimSpace(input.TransactionHash)
-	if tradeID == "" || len(tradeID) > 128 || len(description) < 10 || len(description) > 1000 || len(txHash) > 256 || input.File == nil {
+	if tradeID == "" || len(tradeID) > 128 || len(description) < 10 || len(description) > 1000 || txHash == "" || len(txHash) > 256 || input.File == nil {
 		return CreateResult{}, ErrInvalidReview
 	}
 	if input.File.Size <= 0 || input.File.Size > MaxEvidenceSize {
@@ -188,22 +181,6 @@ func Resolve(reviewID int64, decision, txHash, note, reviewer string) error {
 	if decision == "approve" && txHash == "" {
 		return ErrInvalidReview
 	}
-	var chainPayment *task.ManualPaymentVerification
-	if decision == "approve" {
-		order, ok := model.GetTradeOrder(review.TradeID)
-		if !ok {
-			return ErrReviewUnavailable
-		}
-		if !model.IsExchangeTradeType(order.TradeType) {
-			verified, verifyErr := verifyManualPayment(context.Background(), &order, txHash)
-			if verifyErr != nil {
-				return ErrReviewTxMismatch
-			}
-			txHash = verified.TxHash
-			chainPayment = &verified
-		}
-	}
-
 	now := time.Now()
 	status := model.PaymentReviewRejected
 	if decision == "approve" {
@@ -218,7 +195,7 @@ func Resolve(reviewID int64, decision, txHash, note, reviewer string) error {
 			return ErrReviewResolved
 		}
 		if status == model.PaymentReviewApproved {
-			if err := approveOrder(tx, locked.TradeID, txHash, now, chainPayment); err != nil {
+			if err := approveOrder(tx, locked.TradeID, txHash, now); err != nil {
 				return err
 			}
 		}
@@ -233,7 +210,11 @@ func Resolve(reviewID int64, decision, txHash, note, reviewer string) error {
 	})
 }
 
-func approveOrder(tx *gorm.DB, tradeID, txHash string, at time.Time, chainPayment *task.ManualPaymentVerification) error {
+// approveOrder records an administrator's manual decision. The administrator
+// has already checked the submitted evidence and the provider's own records,
+// so approval must not depend on a live provider scan or on an exact match in
+// the automatic transaction tables.
+func approveOrder(tx *gorm.DB, tradeID, txHash string, at time.Time) error {
 	var order model.Order
 	if err := tx.Where("trade_id = ?", tradeID).First(&order).Error; err != nil {
 		return ErrReviewUnavailable
@@ -241,48 +222,72 @@ func approveOrder(tx *gorm.DB, tradeID, txHash string, at time.Time, chainPaymen
 	if !reviewableOrder(order) {
 		return ErrReviewUnavailable
 	}
-	if model.IsExchangeTradeType(order.TradeType) {
-		var row model.ExchangeTransaction
-		if err := tx.Where("provider = ? AND transaction_id = ? AND trade_type = ? AND status = ?", order.PaymentProvider(), txHash, order.TradeType, model.ExchangeTransactionPending).First(&row).Error; err != nil {
-			return ErrReviewTxNotFound
-		}
-		amount, err := decimal.NewFromString(row.Amount)
-		if err != nil {
-			return ErrReviewTxMismatch
-		}
-		if row.ReceiverUID != order.MatchAddress || !amount.Equal(decimal.RequireFromString(order.Amount)) || row.OccurredAt.Before(order.CreatedAt.Time()) {
-			return ErrReviewTxMismatch
-		}
-		// Keep the exchange claim and order transition atomic with the review.
-		updated := tx.Model(&model.ExchangeTransaction{}).
-			Where("id = ? AND status = ?", row.ID, model.ExchangeTransactionPending).
-			Updates(map[string]any{"status": model.ExchangeTransactionProcessed, "order_id": order.ID})
-		if updated.Error != nil || updated.RowsAffected != 1 {
-			return model.ErrExchangeTransactionNotPending
-		}
-		updated = tx.Model(&model.Order{}).Where("id = ? AND status IN (?)", order.ID, []int{model.OrderStatusWaiting, model.OrderStatusExpired, model.OrderStatusConfirming}).Updates(map[string]any{
-			"status":        model.OrderStatusSuccess,
-			"ref_hash":      txHash,
-			"from_address":  "exchange-review",
-			"confirmed_at":  at,
-			"ref_block_num": at.Unix(),
-		})
-		if updated.Error != nil || updated.RowsAffected != 1 {
-			return ErrReviewUnavailable
-		}
-		return nil
+	if err := claimManualReviewReference(tx, order, txHash); err != nil {
+		return err
 	}
-	if chainPayment == nil {
-		return ErrReviewTxUnavailable
+	updates := map[string]any{
+		"status":        model.OrderStatusSuccess,
+		"from_address":  "manual-review",
+		"confirmed_at":  at,
+		"ref_block_num": at.Unix(),
 	}
-	return model.CompleteManualPaymentTx(tx, &order, model.VerifiedManualPayment{
-		Network:     chainPayment.Network,
-		TxHash:      chainPayment.TxHash,
-		Amount:      chainPayment.Amount,
-		FromAddress: chainPayment.FromAddress,
-		RecvAddress: chainPayment.RecvAddress,
-		TradeType:   chainPayment.TradeType,
-		Timestamp:   chainPayment.Timestamp,
-		BlockNum:    chainPayment.BlockNum,
-	}, chainPayment.Network != "solana")
+	if strings.TrimSpace(txHash) != "" {
+		updates["ref_hash"] = strings.TrimSpace(txHash)
+	}
+	updated := tx.Model(&model.Order{}).
+		Where("id = ? AND status IN (?)", order.ID, []int{model.OrderStatusWaiting, model.OrderStatusExpired, model.OrderStatusConfirming}).
+		Updates(updates)
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return ErrReviewUnavailable
+	}
+	return nil
+}
+
+func claimManualReviewReference(tx *gorm.DB, order model.Order, txHash string) error {
+	trade, ok := model.GetTradeConfig(order.TradeType)
+	if !ok {
+		return ErrReviewUnavailable
+	}
+	network := string(trade.Network)
+	canonicalHash := strings.ToLower(strings.TrimSpace(txHash))
+
+	var claim model.ManualPaymentClaim
+	err := tx.Where("network = ? AND LOWER(tx_hash) = ?", network, canonicalHash).Limit(1).Find(&claim).Error
+	if err != nil {
+		return err
+	}
+	if claim.ID != 0 {
+		if claim.TradeID == order.TradeId {
+			return nil
+		}
+		return ErrReviewTxUsed
+	}
+
+	var used int64
+	if err := tx.Model(&model.Order{}).
+		Where("id <> ? AND status IN (?)", order.ID, []int{model.OrderStatusConfirming, model.OrderStatusSuccess}).
+		Where("trade_type IN (?)", model.GetNetworkTrades(trade.Network)).
+		Where("LOWER(ref_hash) = ?", canonicalHash).
+		Count(&used).Error; err != nil {
+		return err
+	}
+	if used > 0 {
+		return ErrReviewTxUsed
+	}
+
+	err = tx.Create(&model.ManualPaymentClaim{
+		Network: network,
+		TxHash:  strings.TrimSpace(txHash),
+		TradeID: order.TradeId,
+	}).Error
+	if err != nil {
+		message := strings.ToLower(err.Error())
+		if strings.Contains(message, "unique") || strings.Contains(message, "duplicate") {
+			return ErrReviewTxUsed
+		}
+	}
+	return err
 }

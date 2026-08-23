@@ -902,10 +902,11 @@
         var close = document.getElementById('paymentReviewClose');
         var cancel = document.getElementById('paymentReviewCancel');
         var description = document.getElementById('paymentReviewDescription');
+        var transactionHash = document.getElementById('paymentReviewTransactionHash');
         var evidence = document.getElementById('paymentReviewEvidence');
         var submit = document.getElementById('paymentReviewSubmit');
         var message = document.getElementById('paymentReviewMessage');
-        if (!section || !modal || !form || !toggle || !close || !cancel || !description || !evidence || !submit || !message) return;
+        if (!section || !modal || !form || !toggle || !close || !cancel || !description || !transactionHash || !evidence || !submit || !message) return;
 
         var available = !!data && data.status !== 2 && data.status !== 4;
         section.hidden = !available;
@@ -913,6 +914,7 @@
 
         function reset() {
             description.value = '';
+            transactionHash.value = '';
             evidence.value = '';
             message.textContent = '';
             message.className = 'manual-tx-message';
@@ -946,8 +948,8 @@
         form.addEventListener('submit', function (event) {
             event.preventDefault();
             var file = evidence.files && evidence.files[0];
-            if (!file || description.value.trim().length < 10) {
-                message.textContent = '请上传截图并填写至少10个字的付款说明';
+            if (!file || !transactionHash.value.trim() || description.value.trim().length < 10) {
+                message.textContent = '请填写交易编号、至少10个字的付款说明并上传截图';
                 message.className = 'manual-tx-message error';
                 return;
             }
@@ -956,6 +958,7 @@
             var body = new FormData();
             body.append('trade_id', (orderData && orderData.trade_id) || gTradeId);
             body.append('description', description.value.trim());
+            body.append('transaction_hash', transactionHash.value.trim());
             body.append('evidence', file);
             fetch('/api/v1/pay/payment-review', { method: 'POST', body: body })
                 .then(function (response) { return response.json(); })

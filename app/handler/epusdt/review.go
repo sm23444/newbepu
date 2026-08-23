@@ -146,9 +146,7 @@ func (PaymentReview) AdminResolve(ctx *gin.Context) {
 	err := paymentreview.Resolve(int64(req.ID), req.Decision, req.TransactionHash, req.Note, "admin")
 	if err != nil {
 		switch {
-		case errors.Is(err, paymentreview.ErrReviewTxNotFound), errors.Is(err, paymentreview.ErrReviewTxMismatch):
-			base.BadRequest(ctx, err.Error())
-		case errors.Is(err, paymentreview.ErrReviewResolved), errors.Is(err, paymentreview.ErrReviewUnavailable):
+		case errors.Is(err, paymentreview.ErrInvalidReview), errors.Is(err, paymentreview.ErrReviewResolved), errors.Is(err, paymentreview.ErrReviewUnavailable), errors.Is(err, paymentreview.ErrReviewTxUsed):
 			base.BadRequest(ctx, err.Error())
 		default:
 			base.Error(ctx, err)

@@ -122,3 +122,11 @@ test('updateQrPaymentLogo hides images that fail to load', () => {
     assert.equal(network.style.display, 'none');
     assert.equal(network.src, '');
 });
+
+test('manual review requires and submits a transaction reference', () => {
+    const html = fs.readFileSync(path.join(__dirname, 'views/checkout.html'), 'utf8');
+    const script = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'), 'utf8');
+
+    assert.match(html, /id="paymentReviewTransactionHash"[^>]*required/);
+    assert.match(script, /body\.append\('transaction_hash', transactionHash\.value\.trim\(\)\)/);
+});
