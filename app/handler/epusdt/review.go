@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +15,12 @@ import (
 )
 
 type PaymentReview struct{}
+
+type listReviewRequest struct {
+	Page   int    `json:"page" form:"page"`
+	Size   int    `json:"size" form:"size"`
+	Status string `json:"status" form:"status"`
+}
 
 func (Epusdt) SubmitPaymentReview(ctx *gin.Context) {
 	if err := ctx.Request.ParseMultipartForm(6 << 20); err != nil {
@@ -57,15 +62,26 @@ func reviewError(ctx *gin.Context, err error) {
 // AdminList returns pending reviews first; the existing admin token middleware
 // protects the route before this handler runs.
 func (PaymentReview) AdminList(ctx *gin.Context) {
-	page, _ := strconv.Atoi(ctx.DefaultPostForm("page", "1"))
-	size, _ := strconv.Atoi(ctx.DefaultPostForm("size", "20"))
+	var req listReviewRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		base.BadRequest(ctx, err.Error())
+		return
+	}
+	page := req.Page
+	size := req.Size
+	status := strings.TrimSpace(req.Status)
+	if page == 0 {
+		page = 1
+	}
+	if size == 0 {
+		size = 20
+	}
 	if page < 1 {
 		page = 1
 	}
 	if size < 1 || size > 100 {
 		size = 20
 	}
-	status := strings.TrimSpace(ctx.PostForm("status"))
 	query := model.Db.Model(&model.PaymentReview{})
 	if status != "" {
 		query = query.Where("status = ?", status)

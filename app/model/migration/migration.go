@@ -9,6 +9,7 @@ const TableName = "bep_migration"
 
 var migrations = []*gormigrate.Migration{
 	m202607081430DropOrderTradeTypeReselect(),
+	m202608230900PaymentReviewTradeIDNotUnique(),
 }
 
 func Run(db *gorm.DB, initModels []any) error {

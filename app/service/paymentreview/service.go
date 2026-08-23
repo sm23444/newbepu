@@ -1,6 +1,7 @@
 package paymentreview
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/v03413/bepusdt/app/model"
+	"github.com/v03413/bepusdt/app/task"
 	"github.com/v03413/bepusdt/app/utils"
 	"gorm.io/gorm"
 )
@@ -44,6 +46,8 @@ type CreateResult struct {
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 }
+
+var verifyManualPayment = task.VerifyManualPayment
 
 func Create(input CreateInput) (CreateResult, error) {
 	tradeID := strings.TrimSpace(input.TradeID)
@@ -121,6 +125,9 @@ func Create(input CreateInput) (CreateResult, error) {
 		return tx.Create(review).Error
 	}); err != nil {
 		_ = os.Remove(path)
+		if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			return CreateResult{}, ErrReviewExists
+		}
 		return CreateResult{}, err
 	}
 
@@ -181,6 +188,21 @@ func Resolve(reviewID int64, decision, txHash, note, reviewer string) error {
 	if decision == "approve" && txHash == "" {
 		return ErrInvalidReview
 	}
+	var chainPayment *task.ManualPaymentVerification
+	if decision == "approve" {
+		order, ok := model.GetTradeOrder(review.TradeID)
+		if !ok {
+			return ErrReviewUnavailable
+		}
+		if !model.IsExchangeTradeType(order.TradeType) {
+			verified, verifyErr := verifyManualPayment(context.Background(), &order, txHash)
+			if verifyErr != nil {
+				return ErrReviewTxMismatch
+			}
+			txHash = verified.TxHash
+			chainPayment = &verified
+		}
+	}
 
 	now := time.Now()
 	status := model.PaymentReviewRejected
@@ -196,7 +218,7 @@ func Resolve(reviewID int64, decision, txHash, note, reviewer string) error {
 			return ErrReviewResolved
 		}
 		if status == model.PaymentReviewApproved {
-			if err := approveOrder(tx, locked.TradeID, txHash, now); err != nil {
+			if err := approveOrder(tx, locked.TradeID, txHash, now, chainPayment); err != nil {
 				return err
 			}
 		}
@@ -211,7 +233,7 @@ func Resolve(reviewID int64, decision, txHash, note, reviewer string) error {
 	})
 }
 
-func approveOrder(tx *gorm.DB, tradeID, txHash string, at time.Time) error {
+func approveOrder(tx *gorm.DB, tradeID, txHash string, at time.Time, chainPayment *task.ManualPaymentVerification) error {
 	var order model.Order
 	if err := tx.Where("trade_id = ?", tradeID).First(&order).Error; err != nil {
 		return ErrReviewUnavailable
@@ -250,5 +272,17 @@ func approveOrder(tx *gorm.DB, tradeID, txHash string, at time.Time) error {
 		}
 		return nil
 	}
-	return ErrReviewTxUnavailable
+	if chainPayment == nil {
+		return ErrReviewTxUnavailable
+	}
+	return model.CompleteManualPaymentTx(tx, &order, model.VerifiedManualPayment{
+		Network:     chainPayment.Network,
+		TxHash:      chainPayment.TxHash,
+		Amount:      chainPayment.Amount,
+		FromAddress: chainPayment.FromAddress,
+		RecvAddress: chainPayment.RecvAddress,
+		TradeType:   chainPayment.TradeType,
+		Timestamp:   chainPayment.Timestamp,
+		BlockNum:    chainPayment.BlockNum,
+	}, chainPayment.Network != "solana")
 }

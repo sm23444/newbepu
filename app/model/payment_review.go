@@ -12,7 +12,7 @@ const (
 // kept outside the public static tree; this table stores only their metadata.
 type PaymentReview struct {
 	Id
-	TradeID         string     `gorm:"column:trade_id;type:varchar(128);not null;uniqueIndex;index" json:"trade_id"`
+	TradeID         string     `gorm:"column:trade_id;type:varchar(128);not null;index:idx_payment_review_trade_id" json:"trade_id"`
 	Status          string     `gorm:"column:status;type:varchar(16);not null;index" json:"status"`
 	TransactionHash string     `gorm:"column:transaction_hash;type:varchar(256);not null;default:''" json:"transaction_hash"`
 	Description     string     `gorm:"column:description;type:varchar(1000);not null" json:"description"`

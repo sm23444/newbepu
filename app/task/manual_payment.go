@@ -44,6 +44,20 @@ type ManualPaymentResult struct {
 	Status  int    `json:"status"`
 }
 
+// ManualPaymentVerification is a verified on-chain transfer returned by the
+// manual payment RPC validators. It is intentionally separate from order
+// mutation so review approval can verify first and claim atomically later.
+type ManualPaymentVerification struct {
+	Network     string
+	TxHash      string
+	Amount      decimal.Decimal
+	FromAddress string
+	RecvAddress string
+	Timestamp   time.Time
+	TradeType   model.TradeType
+	BlockNum    int
+}
+
 type manualPaymentVerifier func(context.Context, *model.Order, string) (transfer, error)
 
 var defaultManualPaymentVerifiers = map[model.Network]manualPaymentVerifier{
@@ -62,6 +76,25 @@ var defaultManualPaymentVerifiers = map[model.Network]manualPaymentVerifier{
 
 func SubmitManualPayment(ctx context.Context, order *model.Order, txID string) (ManualPaymentResult, error) {
 	return submitManualPaymentWithVerifiers(ctx, order, txID, defaultManualPaymentVerifiers)
+}
+
+// VerifyManualPayment validates a user-supplied on-chain transaction against
+// the order without changing order or claim state.
+func VerifyManualPayment(ctx context.Context, order *model.Order, txID string) (ManualPaymentVerification, error) {
+	trans, err := verifyManualPaymentWithVerifiers(ctx, order, txID, defaultManualPaymentVerifiers)
+	if err != nil {
+		return ManualPaymentVerification{}, err
+	}
+	return ManualPaymentVerification{
+		Network:     trans.Network,
+		TxHash:      trans.TxHash,
+		Amount:      trans.Amount,
+		FromAddress: trans.FromAddress,
+		RecvAddress: trans.RecvAddress,
+		Timestamp:   trans.Timestamp,
+		TradeType:   trans.TradeType,
+		BlockNum:    trans.BlockNum,
+	}, nil
 }
 
 func ManualPaymentAvailable(order *model.Order) bool {
@@ -101,14 +134,12 @@ func submitManualPaymentWithVerifiers(ctx context.Context, order *model.Order, t
 		return result, ErrManualPaymentInvalidOrder
 	}
 	network := trade.Network
-	verifier, ok := verifiers[network]
-	if !ok {
+	if _, ok := verifiers[network]; !ok {
 		return result, fmt.Errorf("%w: %s", ErrManualPaymentNetworkDisabled, network)
 	}
 	if strings.TrimSpace(model.Endpoint(network)) == "" {
 		return result, fmt.Errorf("%w: %s", ErrManualPaymentNetworkDisabled, network)
 	}
-
 	canonicalTxID, err := canonicalManualTransactionID(network, txID)
 	if err != nil {
 		return result, fmt.Errorf("%w: %v", ErrManualPaymentInvalidTxID, err)
@@ -122,14 +153,9 @@ func submitManualPaymentWithVerifiers(ctx context.Context, order *model.Order, t
 		return result, ErrManualPaymentTxUsed
 	}
 
-	verifyCtx, cancel := context.WithTimeout(ctx, manualPaymentTimeout)
-	defer cancel()
-	trans, err := verifier(verifyCtx, order, strings.TrimSpace(txID))
+	trans, err := verifyManualPaymentWithVerifiers(ctx, order, txID, verifiers)
 	if err != nil {
 		return result, err
-	}
-	if trans.Network != string(network) || trans.TradeType != order.TradeType || !orderTransferMatch(*order, trans) {
-		return result, ErrManualPaymentMismatch
 	}
 
 	if err = model.ClaimManualPayment(order, string(network), trans.TxHash, trans.BlockNum, trans.FromAddress, trans.Timestamp, trans.Amount, caseInsensitive); err != nil {
@@ -147,6 +173,46 @@ func submitManualPaymentWithVerifiers(ctx context.Context, order *model.Order, t
 	}
 
 	return ManualPaymentResult{TradeID: order.TradeId, TxHash: order.RefHash, Status: order.Status}, nil
+}
+
+func verifyManualPaymentWithVerifiers(ctx context.Context, order *model.Order, txID string, verifiers map[model.Network]manualPaymentVerifier) (transfer, error) {
+	if order == nil || order.ID == 0 || order.CreatedAt == nil || order.TradeType == "" {
+		return transfer{}, ErrManualPaymentInvalidOrder
+	}
+	if model.IsExchangeTradeType(order.TradeType) {
+		return transfer{}, ErrManualPaymentExchangeOrder
+	}
+	if order.Status != model.OrderStatusWaiting && order.Status != model.OrderStatusExpired && order.Status != model.OrderStatusConfirming {
+		return transfer{}, ErrManualPaymentNotEligible
+	}
+	if order.Status == model.OrderStatusExpired && order.ExpiredAt.Before(time.Now().Add(model.GetLookbackHour())) {
+		return transfer{}, ErrManualPaymentNotEligible
+	}
+	trade, ok := model.GetTradeConfig(order.TradeType)
+	if !ok {
+		return transfer{}, ErrManualPaymentInvalidOrder
+	}
+	network := trade.Network
+	verifier, ok := verifiers[network]
+	if !ok {
+		return transfer{}, fmt.Errorf("%w: %s", ErrManualPaymentNetworkDisabled, network)
+	}
+	if strings.TrimSpace(model.Endpoint(network)) == "" {
+		return transfer{}, fmt.Errorf("%w: %s", ErrManualPaymentNetworkDisabled, network)
+	}
+	if _, err := canonicalManualTransactionID(network, txID); err != nil {
+		return transfer{}, fmt.Errorf("%w: %v", ErrManualPaymentInvalidTxID, err)
+	}
+	verifyCtx, cancel := context.WithTimeout(ctx, manualPaymentTimeout)
+	defer cancel()
+	trans, err := verifier(verifyCtx, order, strings.TrimSpace(txID))
+	if err != nil {
+		return transfer{}, err
+	}
+	if trans.Network != string(network) || trans.TradeType != order.TradeType || !orderTransferMatch(*order, trans) {
+		return transfer{}, ErrManualPaymentMismatch
+	}
+	return trans, nil
 }
 
 func canonicalManualTransactionID(network model.Network, input string) (string, error) {
