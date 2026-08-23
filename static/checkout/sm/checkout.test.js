@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
@@ -129,6 +130,14 @@ test('manual review requires and submits a transaction reference', () => {
 
     assert.match(html, /id="paymentReviewTransactionHash"[^>]*required/);
     assert.match(script, /body\.append\('transaction_hash', transactionHash\.value\.trim\(\)\)/);
+});
+
+test('checkout script cache key matches its content hash', () => {
+    const html = fs.readFileSync(path.join(__dirname, 'views/checkout.html'), 'utf8');
+    const script = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'));
+    const contentHash = crypto.createHash('sha256').update(script).digest('hex').slice(0, 12);
+
+    assert.match(html, new RegExp('checkout\\.js\\?v=' + contentHash));
 });
 
 test('manual review availability matches backend reviewable order states', () => {
