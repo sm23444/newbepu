@@ -51,6 +51,7 @@ export default {
     ["home"]: "首页",
     ["wallet"]: "钱包管理",
     ["order"]: "交易订单",
+    ["payment-review"]: "付款复核",
     ["rate"]: "汇率监控",
     ["rate-list"]: "同步记录",
     ["rate-syntax"]: "汇率配置",

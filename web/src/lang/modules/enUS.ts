@@ -49,6 +49,7 @@ export default {
   },
   menu: {
     ["home"]: "home",
+    ["payment-review"]: "payment review",
     ["file"]: "file",
     ["document-library"]: "document-library",
     ["table"]: "table",
