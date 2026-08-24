@@ -22,7 +22,7 @@ type ManualPaymentClaim struct {
 	AutoTimeAt
 }
 
-func NormalizeManualPaymentReference(network, txHash string, caseInsensitive bool) string {
+func NormalizeManualPaymentReference(txHash string, caseInsensitive bool) string {
 	value := strings.TrimSpace(txHash)
 	if caseInsensitive {
 		return strings.ToLower(value)
@@ -35,7 +35,7 @@ func (ManualPaymentClaim) TableName() string {
 }
 
 func ManualPaymentTransactionUsed(network, txHash string, caseInsensitive bool) (bool, error) {
-	txHash = NormalizeManualPaymentReference(network, txHash, caseInsensitive)
+	txHash = NormalizeManualPaymentReference(txHash, caseInsensitive)
 	var count int64
 	query := Db.Model(&ManualPaymentClaim{}).Where("network = ?", network)
 	if caseInsensitive {
@@ -62,7 +62,7 @@ func ManualPaymentTransactionUsed(network, txHash string, caseInsensitive bool) 
 }
 
 func ClaimManualPayment(order *Order, network, txHash string, blockNum int, from string, at time.Time, amount decimal.Decimal, caseInsensitive bool) error {
-	txHash = NormalizeManualPaymentReference(network, txHash, caseInsensitive)
+	txHash = NormalizeManualPaymentReference(txHash, caseInsensitive)
 	updates := map[string]any{
 		"from_address":  from,
 		"confirmed_at":  at,
