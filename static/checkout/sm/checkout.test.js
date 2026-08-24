@@ -131,3 +131,11 @@ test('checkout script cache key matches its content hash', () => {
 
     assert.match(html, new RegExp('checkout\\.js\\?v=' + contentHash));
 });
+
+test('checkout stylesheet cache key matches its content hash', () => {
+    const html = fs.readFileSync(path.join(__dirname, 'views/checkout.html'), 'utf8');
+    const stylesheet = fs.readFileSync(path.join(__dirname, 'assets/css/checkout.css'), 'utf8').replace(/\r\n/g, '\n');
+    const contentHash = crypto.createHash('sha256').update(stylesheet, 'utf8').digest('hex').slice(0, 12);
+
+    assert.match(html, new RegExp('checkout\\.css\\?v=' + contentHash));
+});

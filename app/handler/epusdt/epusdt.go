@@ -402,6 +402,8 @@ func (Epusdt) CancelTransaction(ctx *gin.Context) {
 }
 
 func (Epusdt) Checkout(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
+
 	tradeId := ctx.Param("trade_id")
 	if _, ok := model.GetTradeOrder(tradeId); !ok {
 		ctx.String(200, "order not found")
