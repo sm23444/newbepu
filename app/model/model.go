@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -15,7 +14,6 @@ import (
 
 var Db *gorm.DB
 var err error
-var dataDir string
 
 type Id struct {
 	ID int64 `gorm:"column:id;primaryKey;autoIncrement;not null;comment:主键ID" json:"id"`
@@ -47,7 +45,6 @@ func initSqlite(db string) error {
 		"&_pragma=synchronous(NORMAL)"+ // NORMAL 模式，性能与安全平衡
 		"&_pragma=wal_autocheckpoint(1500)", // 适中的 checkpoint 频率
 		db)
-	dataDir = filepath.Dir(db)
 	Db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 
@@ -102,10 +99,6 @@ func ensurePrivateDirectory(dir string) error {
 }
 
 func initPostgres(dsn string) error {
-	dataDir = strings.TrimSpace(os.Getenv("BEPUSDT_DATA_DIR"))
-	if dataDir == "" {
-		dataDir = "."
-	}
 	// 首次启动可能出现 SLOW SQL 告警，这是由于连接池首次连接预热引起的，后续连接将正常
 
 	var err error
