@@ -9,7 +9,7 @@
     <script src="/checkout/sm/assets/js/jquery.min.js"></script>
     <script src="/checkout/sm/assets/js/jquery.qrcode.min.js"></script>
     <script src="/checkout/sm/assets/js/i18next.min.js"></script>
-    <script src="/checkout/sm/assets/js/checkout.js?v=2b6ada3a4e68"></script>
+    <script src="/checkout/sm/assets/js/checkout.js?v=abdabf91c2a7"></script>
 </head>
 <body>
 <div class="checkout-card" id="selectionStage" style="display:none;">
@@ -156,9 +156,6 @@
     <div class="manual-tx-section" id="manualTxSection" hidden>
         <button class="manual-tx-toggle" id="manualTxToggle" type="button" aria-expanded="false" aria-haspopup="dialog" aria-controls="manualTxModal" data-i18n="manualTxOpen">已转账但未到账？点击提交TxID链上验证</button>
     </div>
-    <div class="manual-tx-section" id="paymentReviewSection" hidden>
-        <button class="manual-tx-toggle" id="paymentReviewToggle" type="button" aria-expanded="false" aria-haspopup="dialog" aria-controls="paymentReviewModal">申请人工复核（可上传截图）</button>
-    </div>
 </div>
 <div id="cmusToast" class="toast"></div>
 <div id="manualTxModal" class="modal-overlay manual-tx-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="manualTxTitle">
@@ -174,29 +171,6 @@
             <div class="manual-tx-actions">
                 <button class="manual-tx-cancel" id="manualTxCancel" type="button" data-i18n="manualTxCancel">取消</button>
                 <button class="manual-tx-submit" id="manualTxSubmit" type="submit" data-i18n="manualTxSubmit">提交验证</button>
-            </div>
-        </form>
-    </div>
-</div>
-<div id="paymentReviewModal" class="modal-overlay manual-tx-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="paymentReviewTitle">
-    <div class="manual-tx-dialog payment-review-dialog">
-        <div class="manual-tx-dialog-header">
-            <h2 class="manual-tx-dialog-title" id="paymentReviewTitle">申请人工复核</h2>
-            <button class="manual-tx-close" id="paymentReviewClose" type="button" aria-label="关闭">&times;</button>
-        </div>
-        <form class="manual-tx-form" id="paymentReviewForm" enctype="multipart/form-data">
-            <p class="payment-review-lead">请提供付款说明和截图，人工将根据当前订单核验交易</p>
-            <label class="manual-tx-label" for="paymentReviewDescription">付款说明</label>
-            <textarea class="manual-tx-input payment-review-textarea" id="paymentReviewDescription" maxlength="1000" minlength="10" rows="4" placeholder="请说明付款时间、付款方式，并填写有助于查找转账的信息（至少10个字）"></textarea>
-            <label class="manual-tx-label" for="paymentReviewTransactionHash">交易编号 / 交易哈希</label>
-            <input class="manual-tx-input" id="paymentReviewTransactionHash" type="text" maxlength="256" placeholder="OKX/币安填写 Bill ID，链上填写交易哈希" required>
-            <label class="manual-tx-label" for="paymentReviewEvidence">付款截图</label>
-            <input class="manual-tx-input" id="paymentReviewEvidence" type="file" accept="image/jpeg,image/png,image/webp">
-            <p class="payment-review-hint">仅支持 JPEG、PNG 或 WebP，最大 5 MiB。请勿包含密码或助记词</p>
-            <p class="manual-tx-message" id="paymentReviewMessage" role="status" aria-live="polite"></p>
-            <div class="manual-tx-actions">
-                <button class="manual-tx-cancel" id="paymentReviewCancel" type="button">取消</button>
-                <button class="manual-tx-submit" id="paymentReviewSubmit" type="submit">提交人工复核</button>
             </div>
         </form>
     </div>

@@ -737,23 +737,6 @@ body {
     display: grid;
     gap: 10px;
 }
-.timeout-review-btn {
-    width: 100%;
-    height: 44px;
-    border: 0;
-    border-radius: 8px;
-    background: var(--color-btn);
-    color: #fff;
-    font: inherit;
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background .2s, transform .15s;
-}
-.timeout-review-btn:hover {
-    background: #1a1a1a;
-    transform: translateY(-1px);
-}
 .timeout-return-link {
     display: inline-flex;
     min-height: 36px;
@@ -900,11 +883,6 @@ body {
     box-shadow: 0 24px 64px rgba(0, 0, 0, .2);
     animation: slideUp .28s cubic-bezier(.34, 1.56, .64, 1);
 }
-.payment-review-dialog {
-    width: min(100%, 440px);
-    border-radius: 14px;
-    overflow: hidden;
-}
 .manual-tx-dialog-header {
     min-height: 60px;
     display: flex;
@@ -964,25 +942,6 @@ body {
     outline: 2px solid rgba(0, 178, 106, .18);
     border-color: var(--color-accent);
 }
-.payment-review-lead {
-    margin: 0 0 20px;
-    color: var(--color-text-secondary);
-    font-size: 13px;
-    line-height: 1.5;
-}
-.payment-review-textarea {
-    height: auto;
-    min-height: 92px;
-    padding: 10px 12px;
-    line-height: 1.5;
-    resize: vertical;
-}
-.payment-review-hint {
-    margin: -2px 0 16px;
-    color: var(--color-text-secondary);
-    font-size: 12px;
-    line-height: 1.5;
-}
 .manual-tx-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1022,48 +981,11 @@ body {
 }
 .manual-tx-message.error { color: var(--color-danger); }
 .manual-tx-message.success { color: var(--color-accent); }
-.payment-review-dialog .manual-tx-dialog-header {
-    min-height: 60px;
-    padding: 0 20px;
-}
-.payment-review-dialog .manual-tx-dialog-title {
-    font-size: 18px;
-    font-weight: 750;
-}
-.payment-review-dialog .manual-tx-form {
-    padding: 20px;
-}
-.payment-review-dialog #paymentReviewEvidence {
-    height: 46px;
-    min-height: 46px;
-    padding: 9px 10px;
-    border-style: solid;
-    background: #fff;
-}
-.payment-review-dialog .manual-tx-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-top: 4px;
-}
-.payment-review-dialog .manual-tx-actions button {
-    width: 100%;
-    min-width: 0;
-    height: 40px;
-}
-.payment-review-dialog .manual-tx-submit {
-    background: #111;
-    box-shadow: none;
-}
-.payment-review-dialog .manual-tx-submit:hover {
-    background: #292929;
-}
 @media (max-width: 520px) {
     .manual-tx-section { margin-left: 18px; margin-right: 18px; }
     .manual-tx-modal { padding: 18px; }
     .manual-tx-dialog-header { padding-left: 18px; }
     .manual-tx-form { padding: 18px; }
-    .payment-review-dialog .manual-tx-form { padding: 18px; }
 }
 
 

@@ -115,27 +115,14 @@ type MethodItem struct {
 }
 
 func (o *Order) SetCanceled() error {
-	now := time.Now()
-	if err := Db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&Order{}).
-			Where("id = ? AND status = ?", o.ID, OrderStatusWaiting).
-			Update("status", OrderStatusCanceled)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return fmt.Errorf("order %d is no longer waiting", o.ID)
-		}
-		return tx.Model(&PaymentReview{}).
-			Where("trade_id = ? AND status = ?", o.TradeId, PaymentReviewPending).
-			Updates(map[string]any{
-				"status":          PaymentReviewRejected,
-				"resolution_note": "订单已取消，系统自动关闭复核",
-				"reviewed_by":     "system",
-				"reviewed_at":     now,
-			}).Error
-	}); err != nil {
-		return err
+	result := Db.Model(&Order{}).
+		Where("id = ? AND status = ?", o.ID, OrderStatusWaiting).
+		Update("status", OrderStatusCanceled)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("order %d is no longer waiting", o.ID)
 	}
 
 	o.Status = OrderStatusCanceled

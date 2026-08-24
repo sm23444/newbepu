@@ -124,32 +124,10 @@ test('updateQrPaymentLogo hides images that fail to load', () => {
     assert.equal(network.src, '');
 });
 
-test('manual review requires and submits a transaction reference', () => {
-    const html = fs.readFileSync(path.join(__dirname, 'views/checkout.html'), 'utf8');
-    const script = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'), 'utf8');
-
-    assert.match(html, /id="paymentReviewTransactionHash"[^>]*required/);
-    assert.match(script, /body\.append\('transaction_hash', transactionHash\.value\.trim\(\)\)/);
-    assert.match(script, /setTimeout\(function \(\) \{ closeModal\(false\); \}, 3000\)/);
-});
-
 test('checkout script cache key matches its content hash', () => {
     const html = fs.readFileSync(path.join(__dirname, 'views/checkout.html'), 'utf8');
     const script = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'), 'utf8').replace(/\r\n/g, '\n');
     const contentHash = crypto.createHash('sha256').update(script, 'utf8').digest('hex').slice(0, 12);
 
     assert.match(html, new RegExp('checkout\\.js\\?v=' + contentHash));
-});
-
-test('manual review availability matches backend reviewable order states', () => {
-    const payment = loadPayment();
-
-    assert.deepEqual([1, 2, 3, 4, 5, 6].map(status => payment.paymentReviewAvailable(status)), [
-        true,
-        false,
-        true,
-        false,
-        true,
-        true
-    ]);
 });

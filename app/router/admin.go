@@ -3,7 +3,6 @@ package router
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/v03413/bepusdt/app/handler/admin"
-	"github.com/v03413/bepusdt/app/handler/epusdt"
 )
 
 func adminInit(e *gin.Engine) {
@@ -66,11 +65,4 @@ func adminInit(e *gin.Engine) {
 		PostRegister(exchangeRtr, "/test", true, exchangeHdr.Test)
 	}
 
-	var reviewRtr = e.Group("/api/review")
-	reviewHdr := new(epusdt.PaymentReview)
-	{
-		PostRegister(reviewRtr, "/list", true, reviewHdr.AdminList)
-		PostRegister(reviewRtr, "/detail", true, reviewHdr.AdminDetail)
-		PostRegister(reviewRtr, "/resolve", true, reviewHdr.AdminResolve)
-	}
 }

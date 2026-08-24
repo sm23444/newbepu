@@ -22,7 +22,6 @@ var authRoute = make(map[string]bool)
 var secureRoute = make(map[string]struct{})
 
 const maxRequestBodyBytes int64 = 1 << 20
-const maxReviewRequestBodyBytes int64 = 6 << 20
 
 func Handler() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
@@ -95,11 +94,7 @@ func configureTrustedProxies(engine *gin.Engine, raw string) error {
 func limitRequestBody() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		if ctx.Request.Body != nil {
-			limit := maxRequestBodyBytes
-			if strings.HasPrefix(ctx.Request.URL.Path, "/api/v1/pay/payment-review") {
-				limit = maxReviewRequestBodyBytes
-			}
-			ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, limit)
+			ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, maxRequestBodyBytes)
 		}
 		ctx.Next()
 	}

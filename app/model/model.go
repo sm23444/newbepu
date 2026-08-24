@@ -159,21 +159,7 @@ func AutoMigrate() error {
 		&Conf{},
 		&Rate{},
 		&ExchangeTransaction{},
-		&PaymentReview{},
 	})
-}
-
-// PaymentReviewDir returns the private directory used for uploaded evidence.
-// Operators may override it when the database and application data use
-// different volumes.
-func PaymentReviewDir() string {
-	if configured := strings.TrimSpace(os.Getenv("BEPUSDT_PAYMENT_REVIEW_DIR")); configured != "" {
-		return configured
-	}
-	if dataDir == "" {
-		return "./payment-reviews"
-	}
-	return filepath.Join(dataDir, "payment-reviews")
 }
 
 func Close() {
