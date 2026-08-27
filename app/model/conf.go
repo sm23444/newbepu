@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -18,7 +19,9 @@ import (
 	"gorm.io/gorm"
 )
 
-var confCache sync.Map
+type configurationSnapshot map[ConfKey]string
+
+var confCache atomic.Pointer[configurationSnapshot]
 var installMu sync.Mutex
 var installTokenHash [sha256.Size]byte
 var installTokenReady bool
@@ -159,17 +162,11 @@ func GetVs(keys []ConfKey) map[ConfKey]string {
 
 // GetC 从缓存获取配置，适用于高频读取，依赖 RefreshC 刷新缓存
 func GetC(k ConfKey) string {
-	value, ok := confCache.Load(k)
-	if !ok {
+	snapshot := confCache.Load()
+	if snapshot == nil {
 		return ""
 	}
-
-	valueString, ok := value.(string)
-	if !ok {
-		return ""
-	}
-
-	return valueString
+	return (*snapshot)[k]
 }
 
 func RefreshC() error {
@@ -182,10 +179,11 @@ func RefreshC() error {
 		return err
 	}
 
-	confCache.Clear()
+	snapshot := make(configurationSnapshot, len(rows))
 	for _, row := range rows {
-		confCache.Store(row.K, row.V)
+		snapshot[row.K] = row.V
 	}
+	confCache.Store(&snapshot)
 
 	return nil
 }

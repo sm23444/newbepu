@@ -71,7 +71,9 @@ func StartBuildOrder(p OrderParams) (Order, error) {
 		return order, fmt.Errorf("交易金额必须在 %s - %s 之间", minAmount.String(), maxAmount.String())
 	}
 
-	Db.Where("order_id = ?", p.OrderId).Order("id desc").Limit(1).Find(&order)
+	if err := Db.Where("order_id = ?", p.OrderId).Order("id desc").Limit(1).Find(&order).Error; err != nil {
+		return order, err
+	}
 	if order.Status == OrderStatusSuccess || order.Status == OrderStatusConfirming {
 		return order, nil
 	}
@@ -79,7 +81,10 @@ func StartBuildOrder(p OrderParams) (Order, error) {
 	buildMutex.Lock()
 	defer buildMutex.Unlock()
 
-	Db.Where("order_id = ?", p.OrderId).Order("id desc").Limit(1).Find(&order)
+	order = Order{}
+	if err := Db.Where("order_id = ?", p.OrderId).Order("id desc").Limit(1).Find(&order).Error; err != nil {
+		return order, err
+	}
 	if order.Status == OrderStatusSuccess || order.Status == OrderStatusConfirming {
 		return order, nil
 	}

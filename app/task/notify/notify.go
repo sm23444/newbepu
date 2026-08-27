@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cast"
@@ -33,6 +34,19 @@ type EpNotify struct {
 }
 
 const maxCallbackResponseBytes = 4 << 10
+
+const (
+	statusNotifyMaxAttempts = 5
+	statusNotifyBaseDelay   = time.Second
+	statusNotifyMaxDelay    = 30 * time.Second
+)
+
+type statusNotifyCall struct {
+	done chan struct{}
+	err  error
+}
+
+var statusNotifyFlights sync.Map
 
 func Handle(order model.Order) error {
 	return handleWithClient(order, false, nil)
@@ -189,13 +203,67 @@ func Bepusdt(o model.Order) {
 	var authToken = model.AuthToken()
 	var client = utils.NewCallbackHttpClient(time.Second * 5)
 	go func() {
-		if err := deliverBepusdtStatusUpdate(model.Db, client, authToken, o); err != nil {
+		if err := retryBepusdtStatusUpdate(context.Background(), model.Db, client, authToken, o, statusNotifyMaxAttempts, statusNotifyBaseDelay); err != nil {
 			log.Warn("notify BEpusdt Error:", err.Error())
 		}
 	}()
 }
 
+func retryBepusdtStatusUpdate(ctx context.Context, db *gorm.DB, client *http.Client, authToken string, o model.Order, attempts int, initialDelay time.Duration) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	delay := initialDelay
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := deliverBepusdtStatusUpdate(db, client, authToken, o); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if attempt == attempts {
+			break
+		}
+		if delay <= 0 {
+			continue
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(lastErr, ctx.Err())
+		case <-timer.C:
+		}
+		if delay < statusNotifyMaxDelay {
+			delay *= 2
+			if delay > statusNotifyMaxDelay {
+				delay = statusNotifyMaxDelay
+			}
+		}
+	}
+
+	return lastErr
+}
+
 func deliverBepusdtStatusUpdate(db *gorm.DB, client *http.Client, authToken string, o model.Order) error {
+	flightKey := fmt.Sprintf("%d:%s", o.Status, o.TradeId)
+	call := &statusNotifyCall{done: make(chan struct{})}
+	actual, loaded := statusNotifyFlights.LoadOrStore(flightKey, call)
+	if loaded {
+		active := actual.(*statusNotifyCall)
+		<-active.done
+		return active.err
+	}
+	defer func() {
+		close(call.done)
+		statusNotifyFlights.Delete(flightKey)
+	}()
+
+	call.err = deliverBepusdtStatusUpdateOnce(db, client, authToken, o)
+	return call.err
+}
+
+func deliverBepusdtStatusUpdateOnce(db *gorm.DB, client *http.Client, authToken string, o model.Order) error {
 	if client == nil {
 		client = utils.NewCallbackHttpClient(time.Second * 5)
 	}
@@ -217,8 +285,6 @@ func deliverBepusdtStatusUpdate(db *gorm.DB, client *http.Client, authToken stri
 	if _, ok := cache.Get(key); ok {
 		return nil
 	}
-
-	cache.Set(key, true, time.Minute)
 
 	var data = make(map[string]interface{})
 	var body = EpNotify{
@@ -263,6 +329,7 @@ func deliverBepusdtStatusUpdate(db *gorm.DB, client *http.Client, authToken stri
 	if err != nil {
 		return err
 	}
+	cache.Set(key, true, time.Minute)
 	log.Info(fmt.Sprintf("订单回调成功[%d]：%s %s", current.Status, current.TradeId, string(all)))
 
 	return nil

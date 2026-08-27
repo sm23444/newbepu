@@ -114,3 +114,142 @@ func TestConfGetsMasksSecretsWithoutMaskingSecureEntry(t *testing.T) {
 		t.Fatalf("secure entry after save = %q", secure.V)
 	}
 }
+
+func TestConfSetsRejectsInternalSecurityKeys(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "conf-security.db")+"?cache=shared&mode=rwc"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.Conf{}); err != nil {
+		t.Fatalf("migrate conf: %v", err)
+	}
+	if err := db.Create(&[]model.Conf{
+		{K: model.AdminPassword, V: "original-hash"},
+		{K: model.SystemInstallLock, V: "1"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	previousDB := model.Db
+	model.Db = db
+	t.Cleanup(func() {
+		model.Db = previousDB
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	gin.SetMode(gin.TestMode)
+	request := httptest.NewRequest("POST", "/api/conf/sets", strings.NewReader(`[{"key":"admin_password","value":"attacker-value"},{"key":"payment_timeout","value":"600"}]`))
+	request.Header.Set("Content-Type", "application/json")
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = request
+	(Conf{}).Sets(ctx)
+
+	var response struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(writer.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response %q: %v", writer.Body.String(), err)
+	}
+	if response.Code != 400 {
+		t.Fatalf("response code = %d, want 400", response.Code)
+	}
+	if got := model.GetK(model.AdminPassword); got != "original-hash" {
+		t.Fatalf("admin password = %q, want original hash", got)
+	}
+	var timeoutCount int64
+	if err := db.Model(&model.Conf{}).Where("k = ?", model.PaymentTimeout).Count(&timeoutCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if timeoutCount != 0 {
+		t.Fatal("mixed request partially saved an editable configuration")
+	}
+}
+
+func TestConfDelCannotRemoveRequiredConfiguration(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "conf-delete.db")+"?cache=shared&mode=rwc"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.Conf{}); err != nil {
+		t.Fatalf("migrate conf: %v", err)
+	}
+	if err := db.Create(&model.Conf{K: model.PaymentTimeout, V: "1200"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	previousDB := model.Db
+	model.Db = db
+	t.Cleanup(func() {
+		model.Db = previousDB
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	request := httptest.NewRequest("POST", "/api/conf/del", strings.NewReader(`{"key":"payment_timeout"}`))
+	request.Header.Set("Content-Type", "application/json")
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = request
+	(Conf{}).Del(ctx)
+
+	var response struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(writer.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response %q: %v", writer.Body.String(), err)
+	}
+	if response.Code != 400 {
+		t.Fatalf("response code = %d, want 400", response.Code)
+	}
+	if got := model.GetK(model.PaymentTimeout); got != "1200" {
+		t.Fatalf("payment timeout = %q, want preserved value", got)
+	}
+}
+
+func TestResetApiAuthTokenReturnsNewTokenOnceWhileReadsStayMasked(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "conf-token.db")+"?cache=shared&mode=rwc"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&model.Conf{}); err != nil {
+		t.Fatalf("migrate conf: %v", err)
+	}
+	if err := db.Create(&model.Conf{K: model.ApiAuthToken, V: "old-token"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	previousDB := model.Db
+	model.Db = db
+	t.Cleanup(func() {
+		model.Db = previousDB
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	gin.SetMode(gin.TestMode)
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest("POST", "/api/conf/reset_api_auth_token", nil)
+	(Conf{}).ResetApiAuthToken(ctx)
+
+	var resetResponse struct {
+		Code int `json:"code"`
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(writer.Body.Bytes(), &resetResponse); err != nil {
+		t.Fatalf("decode reset response %q: %v", writer.Body.String(), err)
+	}
+	if resetResponse.Code != 200 || len(resetResponse.Data.Token) != 64 || resetResponse.Data.Token == "old-token" {
+		t.Fatalf("reset response = %+v", resetResponse)
+	}
+	if got := model.GetK(model.ApiAuthToken); got != resetResponse.Data.Token {
+		t.Fatalf("persisted token = %q, want returned token", got)
+	}
+	if got := safeConfValue(model.ApiAuthToken, model.GetK(model.ApiAuthToken)); got != maskedConfValue {
+		t.Fatalf("subsequent token read = %q, want mask", got)
+	}
+}

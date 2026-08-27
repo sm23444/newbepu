@@ -1,9 +1,10 @@
 package admin
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/v03413/bepusdt/app/conf"
@@ -30,6 +31,21 @@ type confSetsReq []confReq
 
 const maskedConfValue = "[已配置]"
 
+var editableConfKeys = map[model.ConfKey]struct{}{
+	model.AdminUsername: {}, model.AdminSecure: {}, model.ApiAppUri: {},
+	model.AtomUSDT: {}, model.AtomUSDC: {}, model.AtomTRX: {}, model.AtomBNB: {}, model.AtomETH: {}, model.AtomGRAM: {}, model.AtomExchangeUSDT: {}, model.AtomExchangeUSDC: {},
+	model.MonitorMinAmount: {}, model.PaymentMinAmount: {}, model.PaymentMaxAmount: {}, model.PaymentTimeout: {}, model.PaymentCheckout: {}, model.PaymentMatchMode: {}, model.PaymentSupportUrl: {}, model.PaymentLookbackHour: {}, model.PaymentNetworkSort: {},
+	model.RpcEndpointPlasma: {}, model.RpcEndpointBsc: {}, model.RpcEndpointSolana: {}, model.RpcEndpointXlayer: {}, model.RpcEndpointPolygon: {}, model.RpcEndpointArbitrum: {}, model.RpcEndpointEthereum: {}, model.RpcEndpointBase: {}, model.RpcEndpointAptos: {}, model.RpcEndpointTron: {}, model.RpcEndpointTronGridApiKey: {}, model.RpcGlobalConfigUrlTon: {},
+	model.RateSyncCoingeckoApiUrl: {}, model.RateSyncCoingeckoApiKey: {}, model.RateSyncInterval: {}, model.RateSyncHistoryDays: {},
+	model.NotifyMaxRetry: {}, model.BlockHeightMaxDiff: {}, model.BlockOffsetConfirm: {},
+	model.MqttHost: {}, model.MqttPort: {}, model.MqttUser: {}, model.MqttPass: {}, model.MqttPublishQos: {}, model.MqttTopicPrefix: {}, model.MqttNetworks: {}, model.HomeRedirectUrl: {},
+}
+
+func isEditableConfKey(key model.ConfKey) bool {
+	_, ok := editableConfKeys[key]
+	return ok
+}
+
 func validPublicURLSetting(key model.ConfKey, value string) bool {
 	return key != model.PaymentSupportUrl || value == "" || utils.IsAllowedHTTPSURL(value)
 }
@@ -48,6 +64,10 @@ func (Conf) Set(ctx *gin.Context) {
 	}
 
 	key := model.ConfKey(strings.TrimSpace(req.Key))
+	if !isEditableConfKey(key) {
+		base.BadRequest(ctx, "该配置项不能通过通用配置接口修改")
+		return
+	}
 	value := strings.TrimSpace(req.Value)
 	value = preserveMaskedConfValue(key, value)
 	if !validPublicURLSetting(key, value) {
@@ -83,16 +103,7 @@ func (Conf) Del(ctx *gin.Context) {
 		return
 	}
 
-	if err := model.Db.Where("k = ?", req.Key).Delete(&model.Conf{}).Error; err != nil {
-		base.Error(ctx, err)
-		return
-	}
-	if err := model.RefreshC(); err != nil {
-		base.Error(ctx, err)
-		return
-	}
-
-	base.Ok(ctx, "删除成功")
+	base.BadRequest(ctx, "通用配置删除接口已禁用")
 }
 
 func (Conf) Gets(ctx *gin.Context) {
@@ -129,6 +140,10 @@ func (Conf) Sets(ctx *gin.Context) {
 	data := make([]model.Conf, 0)
 	for _, item := range req {
 		key := model.ConfKey(strings.TrimSpace(item.Key))
+		if !isEditableConfKey(key) {
+			base.BadRequest(ctx, "该配置项不能通过通用配置接口修改")
+			return
+		}
 		value := strings.TrimSpace(item.Value)
 		value = preserveMaskedConfValue(key, value)
 		if !validPublicURLSetting(key, value) {
@@ -284,10 +299,18 @@ func (Conf) CheckoutList(ctx *gin.Context) {
 }
 
 func (Conf) ResetApiAuthToken(ctx *gin.Context) {
-	if err := model.SetK(model.ApiAuthToken, strings.ToUpper(utils.Md5String(utils.StrSha256(time.Now().String())))); err != nil {
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		base.Error(ctx, err)
+		return
+	}
+	token := strings.ToUpper(hex.EncodeToString(tokenBytes))
+	clear(tokenBytes)
+
+	if err := model.SetK(model.ApiAuthToken, token); err != nil {
 		base.Error(ctx, err)
 		return
 	}
 
-	base.Ok(ctx, "重置成功")
+	base.Ok(ctx, gin.H{"token": token})
 }

@@ -222,20 +222,47 @@ func capturePreparedInstallToken(t *testing.T) string {
 
 func snapshotConfCache() map[ConfKey]string {
 	values := make(map[ConfKey]string)
-	confCache.Range(func(key, value any) bool {
-		values[key.(ConfKey)] = value.(string)
-		return true
-	})
+	snapshot := confCache.Load()
+	if snapshot == nil {
+		return values
+	}
+	for key, value := range *snapshot {
+		values[key] = value
+	}
 
 	return values
 }
 
 func restoreConfCache(values map[ConfKey]string) {
-	confCache.Range(func(key, _ any) bool {
-		confCache.Delete(key)
-		return true
-	})
+	snapshot := make(configurationSnapshot, len(values))
 	for key, value := range values {
-		confCache.Store(key, value)
+		snapshot[key] = value
+	}
+	confCache.Store(&snapshot)
+}
+
+func TestRefreshCReplacesConfigurationSnapshotAtomically(t *testing.T) {
+	initializeBootstrapTestDB(t)
+	for key, value := range map[ConfKey]string{
+		PaymentTimeout:  "1200",
+		PaymentCheckout: "sm",
+	} {
+		if err := Db.Model(&Conf{}).Where("k = ?", key).Update("v", value).Error; err != nil {
+			t.Fatalf("seed configuration %s: %v", key, err)
+		}
+	}
+	restoreConfCache(map[ConfKey]string{
+		PaymentTimeout:  "600",
+		PaymentCheckout: "legacy",
+	})
+
+	if err := RefreshC(); err != nil {
+		t.Fatalf("refresh configuration: %v", err)
+	}
+	if got := GetC(PaymentTimeout); got != "1200" {
+		t.Fatalf("payment timeout = %q, want 1200", got)
+	}
+	if got := GetC(PaymentCheckout); got != "sm" {
+		t.Fatalf("payment checkout = %q, want sm", got)
 	}
 }

@@ -9,7 +9,8 @@
         <a-form :model="form" :rules="rules" :layout="layoutMode" class="base-setting-form" @submit="onSubmit">
           <a-form-item field="api_auth_token" label="对接令牌" extra="API对接的身份验证令牌，请妥善保管">
             <a-input-group class="token-input-group">
-              <a-input-password v-model="form.api_auth_token" placeholder="请输入 Auth Token" readonly />
+              <a-input v-if="revealedApiToken" v-model="form.api_auth_token" readonly />
+              <a-input-password v-else v-model="form.api_auth_token" placeholder="请输入 Auth Token" readonly />
               <a-button type="primary" @click="handleResetToken">重置</a-button>
             </a-input-group>
           </a-form-item>
@@ -121,6 +122,7 @@ const rules = {};
 const checkoutList = ref<Array<{ label: string; value: string; author: string; desc: string; link: string }>>([]);
 const checkoutListLoading = ref(false);
 const networkSortVisible = ref(false);
+const revealedApiToken = ref("");
 
 const normalizePaymentCheckout = (value?: string) => {
   const rawValue = value || "";
@@ -181,7 +183,7 @@ const moveNetwork = (index: number, offset: number) => {
 const syncFormFromConfig = () => {
   if (!data.value) return;
 
-  form.value.api_auth_token = data.value.api_auth_token || "";
+  form.value.api_auth_token = revealedApiToken.value || data.value.api_auth_token || "";
   form.value.api_app_uri = data.value.api_app_uri || "";
   form.value.payment_checkout = normalizePaymentCheckout(data.value.payment_checkout || data.value.payment_template);
   form.value.payment_support_url = data.value.payment_support_url || "";
@@ -225,9 +227,14 @@ const currentCheckoutInfo = computed(() => {
 
 const handleResetToken = async () => {
   try {
-    await resetApiAuthToken({});
-    Message.success("令牌重置成功");
-    emit("refresh");
+    const response = await resetApiAuthToken({});
+    const token = response?.data?.token;
+    if (typeof token !== "string" || token.length === 0) {
+      throw new Error("重置接口未返回新令牌");
+    }
+    revealedApiToken.value = token;
+    form.value.api_auth_token = token;
+    Message.success("令牌已重置，请立即查看并妥善保存");
   } catch {
     Message.error("令牌重置失败");
   }

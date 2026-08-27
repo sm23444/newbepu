@@ -200,6 +200,51 @@ func TestGetBlockByNumberSkipsZeroAmountTransferWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestParseEventTransferSkipsMalformedLogAndKeepsValidTransfer(t *testing.T) {
+	setupEVMReliabilityTestDB(t)
+
+	contracts := model.GetNetworkContractAddresses(conf.Polygon)
+	if len(contracts) == 0 {
+		t.Fatal("Polygon has no registered token contracts")
+	}
+	contract := contracts[0]
+	fromTopic := "0x0000000000000000000000001111111111111111111111111111111111111111"
+	recvTopic := "0x0000000000000000000000002222222222222222222222222222222222222222"
+	amount := "0x0000000000000000000000000000000000000000000000000000000000000001"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(
+			w,
+			`{"jsonrpc":"2.0","result":[{"address":%q,"topics":[%q],"data":%q,"blockNumber":"0xa","transactionHash":%q},{"address":%q,"topics":[%q,%q,%q],"data":%q,"blockNumber":"0xa","transactionHash":%q}],"id":1}`,
+			contract,
+			evmTransferEvent,
+			amount,
+			"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			contract,
+			evmTransferEvent,
+			fromTopic,
+			recvTopic,
+			amount,
+			evmTestTxHash,
+		)
+	}))
+	defer server.Close()
+	setEVMReliabilityTestConf(t, model.RpcEndpointPolygon, server.URL)
+
+	e := evm{Network: conf.Polygon, Client: server.Client()}
+	transfers, err := e.parseEventTransfer(
+		evmBlock{From: 10, To: 10},
+		map[int64]time.Time{10: time.Unix(100, 0)},
+	)
+	if err != nil {
+		t.Fatalf("parse event transfers: %v", err)
+	}
+	if len(transfers) != 1 || transfers[0].TxHash != evmTestTxHash {
+		t.Fatalf("transfers = %#v, want the valid log only", transfers)
+	}
+}
+
 func TestRetryBlockBacksOffAndSplitsWideRanges(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -328,10 +328,24 @@ func (Auth) SetPassword(ctx *gin.Context) {
 
 		return
 	}
+	if len([]byte(newPassword)) > 72 {
+		base.BadRequest(ctx, "新密码不能超过72字节")
 
-	hash, _ := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		return
+	}
 
-	model.SetK(model.AdminPassword, string(hash))
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		base.Error(ctx, err)
+
+		return
+	}
+
+	if err = model.SetK(model.AdminPassword, string(hash)); err != nil {
+		base.Error(ctx, err)
+
+		return
+	}
 	cache.Set(conf.AdminTokenK, "", -1)
 
 	base.Ok(ctx, "修改成功，请重新登录")

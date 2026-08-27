@@ -597,7 +597,7 @@ func (e *evm) parseEventTransfer(b evmBlock, timestamp map[int64]time.Time) ([]t
 
 	for _, itm := range result.Array() {
 		if !itm.IsObject() {
-			return transfers, errors.New("eth_getLogs contains a non-object log")
+			continue
 		}
 		if itm.Get("removed").Bool() {
 			continue
@@ -611,7 +611,7 @@ func (e *evm) parseEventTransfer(b evmBlock, timestamp map[int64]time.Time) ([]t
 
 		topics := itm.Get("topics").Array()
 		if len(topics) < 3 {
-			return transfers, errors.New("eth_getLogs transfer log has fewer than three topics")
+			continue
 		}
 
 		if !strings.EqualFold(topics[0].String(), evmTransferEvent) { // transfer event signature
@@ -621,30 +621,30 @@ func (e *evm) parseEventTransfer(b evmBlock, timestamp map[int64]time.Time) ([]t
 
 		from, err := parseEVMTopicAddress(topics[1].String())
 		if err != nil {
-			return transfers, err
+			continue
 		}
 		recv, err := parseEVMTopicAddress(topics[2].String())
 		if err != nil {
-			return transfers, err
+			continue
 		}
 		amount, err := parseEVMAmount(itm.Get("data").String())
 		if err != nil {
-			return transfers, err
+			continue
 		}
 		if amount.Sign() == 0 {
 			continue
 		}
 		blockNumber, err := parseEVMQuantity(itm.Get("blockNumber").String())
 		if err != nil {
-			return transfers, err
+			continue
 		}
 		blockTime, ok := timestamp[blockNumber]
 		if !ok {
-			return transfers, fmt.Errorf("missing timestamp for EVM block %d", blockNumber)
+			continue
 		}
 		txHash := itm.Get("transactionHash").String()
 		if txHash == "" {
-			return transfers, errors.New("eth_getLogs transfer log has no transaction hash")
+			continue
 		}
 
 		transfers = append(transfers, transfer{

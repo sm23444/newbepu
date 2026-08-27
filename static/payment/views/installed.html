@@ -121,6 +121,7 @@
         }
 
         .submit-button {
+            display: block;
             width: 100%;
             min-height: 44px;
             margin-top: 3px;
@@ -133,6 +134,8 @@
             font-size: 15px;
             font-weight: 700;
             letter-spacing: 0;
+            text-align: center;
+            text-decoration: none;
         }
 
         .submit-button:hover {
@@ -150,6 +153,21 @@
             font-size: 12px;
             line-height: 1.5;
             text-align: center;
+        }
+
+        .token-value {
+            width: 100%;
+            min-height: 88px;
+            padding: 12px;
+            overflow-wrap: anywhere;
+            color: #17211e;
+            background: #f7f9f8;
+            border: 1px solid #aebdb8;
+            border-radius: 4px;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 14px;
+            line-height: 1.55;
+            user-select: all;
         }
 
         @media (max-width: 480px) {
@@ -174,10 +192,24 @@
     <main class="install-panel">
         <header class="panel-header">
             <h1>BEpusdt</h1>
-            <p>安全初始化</p>
+            <p>{{ if .installed }}初始化完成{{ else }}安全初始化{{ end }}</p>
         </header>
 
         <section class="panel-body">
+            {{ if .installed }}
+            <p class="notice">
+                初始化已完成。下面的 API 对接令牌只在本页显示一次，请立即保存。
+            </p>
+
+            <div class="field">
+                <label for="api_token">API 对接令牌</label>
+                <div class="token-value" id="api_token" role="textbox" aria-readonly="true">{{ .apiToken }}</div>
+                <span class="hint">离开或刷新本页后将不再显示；以后可在后台 API 设置中重置。</span>
+            </div>
+
+            <a class="submit-button" href="{{ .secure }}">进入管理后台</a>
+            <p class="security-note">请确认令牌已妥善保存后再离开本页。</p>
+            {{ else }}
             <p class="notice">
                 从服务控制台或 Docker 日志取得一次性安装令牌，然后设置管理员账号和密码。
             </p>
@@ -216,6 +248,7 @@
             </form>
 
             <p class="security-note">验证成功后安装令牌立即失效，系统才会写入已安装状态。</p>
+            {{ end }}
         </section>
     </main>
 </body>

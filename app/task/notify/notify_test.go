@@ -1,6 +1,8 @@
 package notify
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"github.com/glebarez/sqlite"
 	applog "github.com/v03413/bepusdt/app/log"
 	"github.com/v03413/bepusdt/app/model"
+	"github.com/v03413/go-cache"
 	"gorm.io/gorm"
 )
 
@@ -87,6 +90,13 @@ func newWaitingOrder(notifyURL string) model.Order {
 	}
 }
 
+func clearStatusNotificationCache(t *testing.T, order model.Order) {
+	t.Helper()
+	key := fmt.Sprintf("bepusdt_notify_%d_%s", order.Status, order.TradeId)
+	cache.Delete(key)
+	t.Cleanup(func() { cache.Delete(key) })
+}
+
 func TestDeliverBepusdtStatusUpdateDoesNotHoldDBWhileHTTPIsPending(t *testing.T) {
 	db := newNotifyTestDB(t)
 	initNotifyTestLog(t)
@@ -103,6 +113,7 @@ func TestDeliverBepusdtStatusUpdateDoesNotHoldDBWhileHTTPIsPending(t *testing.T)
 	client.Timeout = 2 * time.Second
 
 	order := newWaitingOrder(server.URL)
+	clearStatusNotificationCache(t, order)
 	if err := db.Create(&order).Error; err != nil {
 		t.Fatalf("seed order: %v", err)
 	}
@@ -153,6 +164,7 @@ func TestDeliverBepusdtStatusUpdateRejectsOversizedResponse(t *testing.T) {
 
 	order := newWaitingOrder(server.URL)
 	order.TradeId = "status-update-oversized-response"
+	clearStatusNotificationCache(t, order)
 	if err := db.Create(&order).Error; err != nil {
 		t.Fatalf("seed order: %v", err)
 	}
@@ -263,5 +275,122 @@ func TestConcurrentHandleDeliversOnce(t *testing.T) {
 	}
 	if persisted.NotifyState != model.OrderNotifyStateSucc {
 		t.Fatalf("notify_state = %d, want success", persisted.NotifyState)
+	}
+}
+
+func TestDeliverBepusdtStatusUpdateRetriesAfterFailureAndDeduplicatesSuccess(t *testing.T) {
+	db := newNotifyTestDB(t)
+	initNotifyTestLog(t)
+
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	order := newWaitingOrder(server.URL)
+	order.TradeId = "status-update-retry-after-failure"
+	clearStatusNotificationCache(t, order)
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	client := server.Client()
+	client.Timeout = 2 * time.Second
+
+	if err := deliverBepusdtStatusUpdate(db, client, "test-auth-token", order); err == nil {
+		t.Fatal("first failed delivery returned nil")
+	}
+	if err := deliverBepusdtStatusUpdate(db, client, "test-auth-token", order); err != nil {
+		t.Fatalf("retry delivery failed: %v", err)
+	}
+	if err := deliverBepusdtStatusUpdate(db, client, "test-auth-token", order); err != nil {
+		t.Fatalf("deduplicated delivery failed: %v", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("HTTP requests = %d, want failed attempt plus one retry", got)
+	}
+}
+
+func TestDeliverBepusdtStatusUpdateCoalescesConcurrentCalls(t *testing.T) {
+	db := newNotifyTestDB(t)
+	initNotifyTestLog(t)
+
+	requestStarted := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	var startOnce sync.Once
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		startOnce.Do(func() { close(requestStarted) })
+		<-releaseResponse
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	order := newWaitingOrder(server.URL)
+	order.TradeId = "status-update-concurrent"
+	clearStatusNotificationCache(t, order)
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	client := server.Client()
+	client.Timeout = 2 * time.Second
+
+	results := make(chan error, 2)
+	go func() { results <- deliverBepusdtStatusUpdate(db, client, "test-auth-token", order) }()
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("notification request never reached server")
+	}
+	go func() { results <- deliverBepusdtStatusUpdate(db, client, "test-auth-token", order) }()
+	close(releaseResponse)
+
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent delivery: %v", err)
+		}
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("HTTP requests = %d, want one coalesced delivery", got)
+	}
+}
+
+func TestRetryBepusdtStatusUpdateAutomaticallyRetriesFailure(t *testing.T) {
+	db := newNotifyTestDB(t)
+	initNotifyTestLog(t)
+
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	order := newWaitingOrder(server.URL)
+	order.Status = model.OrderStatusExpired
+	order.TradeId = "status-update-automatic-retry"
+	clearStatusNotificationCache(t, order)
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	client := server.Client()
+	client.Timeout = 2 * time.Second
+
+	if err := retryBepusdtStatusUpdate(context.Background(), db, client, "test-auth-token", order, 2, 0); err != nil {
+		t.Fatalf("automatic retry: %v", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("HTTP requests = %d, want failed attempt plus automatic retry", got)
 	}
 }

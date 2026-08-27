@@ -43,14 +43,12 @@ func newExchangeReselectionTestDB(t *testing.T) *gorm.DB {
 func setExchangeReselectionTestConf(t *testing.T, key ConfKey, value string) {
 	t.Helper()
 
-	oldValue, existed := confCache.Load(key)
-	confCache.Store(key, value)
+	oldSnapshot := snapshotConfCache()
+	updated := snapshotConfCache()
+	updated[key] = value
+	restoreConfCache(updated)
 	t.Cleanup(func() {
-		if existed {
-			confCache.Store(key, oldValue)
-			return
-		}
-		confCache.Delete(key)
+		restoreConfCache(oldSnapshot)
 	})
 }
 

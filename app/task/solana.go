@@ -21,6 +21,7 @@ import (
 	blockapi "github.com/v03413/bepusdt/app/core"
 	"github.com/v03413/bepusdt/app/log"
 	"github.com/v03413/bepusdt/app/model"
+	tasknotify "github.com/v03413/bepusdt/app/task/notify"
 	"github.com/v03413/bepusdt/app/utils"
 )
 
@@ -98,26 +99,34 @@ func (s *solana) syncSlotForward(ctx context.Context) {
 		return
 	}
 
-	s.heightMu.Lock()
-	lastSlotNum := s.lastSlotNum
-	if now-lastSlotNum > cast.ToInt(model.GetC(model.BlockHeightMaxDiff)) { // 区块高度变化过大，强制丢块重扫
-		lastSlotNum = now
-	}
-
-	if now == lastSlotNum { // 区块高度没有变化
-		s.heightMu.Unlock()
-
+	start, end, ok := s.advanceSlotCursor(now, cast.ToInt(model.GetC(model.BlockHeightMaxDiff)))
+	if !ok {
 		return
 	}
-	s.lastSlotNum = now
-	s.heightMu.Unlock()
 
-	for n := lastSlotNum + 1; n <= now; n++ {
+	for n := start; n <= end; n++ {
 		// 待扫描区块入列
 
 		s.slotQueue.In <- n
 	}
 
+}
+
+func (s *solana) advanceSlotCursor(now, maxDiff int) (start, end int, ok bool) {
+	s.heightMu.Lock()
+	defer s.heightMu.Unlock()
+
+	last := s.lastSlotNum
+	if now <= last {
+		return 0, 0, false
+	}
+	if now-last > maxDiff {
+		s.lastSlotNum = now
+		return 0, 0, false
+	}
+
+	s.lastSlotNum = now
+	return last + 1, now, true
 }
 
 func (s *solana) slotDispatch(ctx context.Context) {
@@ -205,93 +214,7 @@ func (s *solana) slotParse(n any) {
 	timestamp := time.Unix(data.Get("result.blockTime").Int(), 0)
 
 	for _, trans := range data.Get("result.transactions").Array() {
-		hash := trans.Get("transaction.signatures.0").String()
-
-		// 解析账号索引
-		accountKeys := make([]string, 0)
-		for _, key := range trans.Get("transaction.message.accountKeys").Array() {
-			accountKeys = append(accountKeys, key.String())
-		}
-		for _, v := range []string{"readonly", "writable"} {
-			for _, key := range trans.Get("meta.loadedAddresses." + v).Array() {
-				accountKeys = append(accountKeys, key.String())
-			}
-		}
-
-		// 查找SPL Token索引
-		splTokenIndex := int64(-1)
-		for i, v := range accountKeys {
-			if v == conf.SolSplToken {
-				splTokenIndex = int64(i)
-
-				break
-			}
-		}
-
-		// SPL Token的Mint地址，即不包含 Token 交易信息
-		if splTokenIndex == -1 {
-
-			continue
-		}
-
-		// 解析 Token 账户 【Token Wallet => Owner Wallet】
-		tokenAccountMap := make(map[string]solanaTokenOwner)
-		for _, v := range []string{"postTokenBalances", "preTokenBalances"} {
-			for _, itm := range trans.Get("meta." + v).Array() {
-				tradeType, ok := model.GetContractTrade(itm.Get("mint").String())
-				index := itm.Get("accountIndex").Int()
-				if !ok || itm.Get("programId").String() != conf.SolSplToken || index < 0 || index >= int64(len(accountKeys)) {
-
-					continue
-				}
-
-				tokenAccountMap[accountKeys[index]] = solanaTokenOwner{
-					TradeType: tradeType,
-					Address:   itm.Get("owner").String(),
-				}
-			}
-		}
-
-		transArr := make([]transfer, 0)
-
-		// 解析外部指令
-		for _, instr := range trans.Get("transaction.message.instructions").Array() {
-			if instr.Get("programIdIndex").Int() != splTokenIndex {
-
-				continue
-			}
-
-			transArr = append(transArr, s.parseTransfer(instr, accountKeys, tokenAccountMap))
-		}
-
-		// 解析内部指令
-		for _, itm := range trans.Get("meta.innerInstructions").Array() {
-			for _, instr := range itm.Get("instructions").Array() {
-				if instr.Get("programIdIndex").Int() != splTokenIndex {
-
-					continue
-				}
-
-				transArr = append(transArr, s.parseTransfer(instr, accountKeys, tokenAccountMap))
-			}
-		}
-
-		// 过滤无关交易
-		result := make([]transfer, 0)
-		for _, t := range transArr {
-			if t.FromAddress == "" || t.RecvAddress == "" || t.Amount.IsZero() {
-
-				continue
-			}
-
-			t.TxHash = hash
-			t.Network = conf.Solana
-			t.BlockNum = slot
-			t.Timestamp = timestamp
-
-			result = append(result, t)
-		}
-
+		result := s.parseTransaction(trans, slot, timestamp)
 		if len(result) > 0 {
 			transferQueue.In <- result
 		}
@@ -301,19 +224,11 @@ func (s *solana) slotParse(n any) {
 }
 
 func (s *solana) parseTransaction(trans gjson.Result, slot int, timestamp time.Time) []transfer {
-	if txErr := trans.Get("meta.err"); txErr.Exists() && txErr.Type != gjson.Null {
+	if !solanaTransactionSucceeded(trans) {
 		return nil
 	}
 
-	accountKeys := make([]string, 0)
-	for _, key := range trans.Get("transaction.message.accountKeys").Array() {
-		accountKeys = append(accountKeys, key.String())
-	}
-	for _, kind := range []string{"readonly", "writable"} {
-		for _, key := range trans.Get("meta.loadedAddresses." + kind).Array() {
-			accountKeys = append(accountKeys, key.String())
-		}
-	}
+	accountKeys := solanaAccountKeys(trans)
 
 	splTokenIndex := int64(-1)
 	for i, key := range accountKeys {
@@ -368,6 +283,41 @@ func (s *solana) parseTransaction(trans gjson.Result, slot int, timestamp time.T
 		result = append(result, item)
 	}
 	return result
+}
+
+// Versioned Solana transactions index static keys first, then ALT writable and readonly keys.
+func solanaAccountKeys(trans gjson.Result) []string {
+	keys := make([]string, 0)
+	for _, key := range trans.Get("transaction.message.accountKeys").Array() {
+		keys = append(keys, key.String())
+	}
+	for _, kind := range []string{"writable", "readonly"} {
+		for _, key := range trans.Get("meta.loadedAddresses." + kind).Array() {
+			keys = append(keys, key.String())
+		}
+	}
+
+	return keys
+}
+
+func solanaTransactionSucceeded(trans gjson.Result) bool {
+	txErr := trans.Get("meta.err")
+	return txErr.Exists() && txErr.Type == gjson.Null
+}
+
+func solanaSignatureStatus(status gjson.Result) (finalized, failed bool) {
+	if !status.Exists() || status.Type == gjson.Null {
+		return false, false
+	}
+	txErr := status.Get("err")
+	if !txErr.Exists() {
+		return false, false
+	}
+	if txErr.Type != gjson.Null {
+		return false, true
+	}
+
+	return status.Get("confirmationStatus").String() == "finalized", false
 }
 
 func (s *solana) parseTransfer(instr gjson.Result, accountKeys []string, tokenAccountMap map[string]solanaTokenOwner) transfer {
@@ -487,8 +437,18 @@ func (s *solana) tradeConfirmHandle(ctx context.Context) {
 			return
 		}
 
-		if data.Get("result.value.0.confirmationStatus").String() == "finalized" {
+		finalized, failed := solanaSignatureStatus(data.Get("result.value.0"))
+		if failed {
+			if err := o.SetFailed(); err != nil {
+				log.Task.Warn("solana tradeConfirmHandle SetFailed failed:", err)
 
+				return
+			}
+			tasknotify.Bepusdt(o)
+
+			return
+		}
+		if finalized {
 			markFinalConfirmed(o)
 		}
 	}

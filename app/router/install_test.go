@@ -91,11 +91,15 @@ func TestFirstVisitRequiresOneTimeInstallToken(t *testing.T) {
 		"confirm_password": {selectedPassword},
 	}
 	response = postInstallForm(handler, valid)
-	if response.Code != http.StatusSeeOther {
-		t.Fatalf("valid install status = %d, want 303", response.Code)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid install status = %d, want 200", response.Code)
 	}
-	if location := response.Header().Get("Location"); location != secure {
-		t.Fatalf("valid install redirect = %q, want %q", location, secure)
+	apiToken := model.GetK(model.ApiAuthToken)
+	if apiToken == "" || !strings.Contains(response.Body.String(), apiToken) {
+		t.Fatal("successful install did not display the API token once")
+	}
+	if !strings.Contains(response.Body.String(), `href="`+secure+`"`) {
+		t.Fatalf("successful install did not link to secure entrance %q", secure)
 	}
 	if !model.IsInstalled() {
 		t.Fatal("valid install request did not persist the install state")
@@ -105,6 +109,12 @@ func TestFirstVisitRequiresOneTimeInstallToken(t *testing.T) {
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(model.GetK(model.AdminPassword)), []byte(strings.TrimSpace(selectedPassword))); err == nil {
 		t.Fatal("owner-selected password was silently trimmed")
+	}
+
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if strings.Contains(response.Body.String(), apiToken) {
+		t.Fatal("API token remained visible after leaving the one-time install response")
 	}
 }
 

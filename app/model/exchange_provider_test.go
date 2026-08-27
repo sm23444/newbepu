@@ -60,7 +60,9 @@ func TestIsExchangeProviderEnabledRequiresCompleteCredentials(t *testing.T) {
 		t.Fatalf("configured OKX UID = %q, want 654321", got)
 	}
 
-	confCache.Store(ExchangeOKXPassphrase, "")
+	updated := snapshotConfCache()
+	updated[ExchangeOKXPassphrase] = ""
+	restoreConfCache(updated)
 	t.Setenv("BEPUSDT_OKX_PASSPHRASE", "")
 	if IsExchangeProviderEnabled(UsdtOKX) {
 		t.Fatal("OKX provider remained enabled without its required passphrase")

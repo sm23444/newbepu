@@ -66,7 +66,11 @@ func completeInstall(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusSeeOther, secure)
+	ctx.HTML(http.StatusOK, "installed.html", gin.H{
+		"installed": true,
+		"apiToken":  model.GetK(model.ApiAuthToken),
+		"secure":    secure,
+	})
 }
 
 func renderInstallError(ctx *gin.Context, status int, username, message string) {
