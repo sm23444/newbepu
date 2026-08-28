@@ -34,7 +34,7 @@ func setupEVMReliabilityTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open test database: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Order{}, &model.Conf{}); err != nil {
+	if err := db.AutoMigrate(&model.Order{}, &model.PaymentTransactionClaim{}, &model.Conf{}); err != nil {
 		t.Fatalf("migrate test database: %v", err)
 	}
 
@@ -269,6 +269,31 @@ func TestRetryBlockBacksOffAndSplitsWideRanges(t *testing.T) {
 	second := <-queue.Out
 	if first != (evmBlock{From: 10, To: 14, Attempt: 3}) || second != (evmBlock{From: 15, To: 19, Attempt: 3}) {
 		t.Fatalf("split retry ranges = %#v, %#v", first, second)
+	}
+}
+
+func TestRetryBlockStopsAfterMaximumAttempts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	queue := chanx.NewUnboundedChan[evmBlock](ctx, 4)
+	setEVMTestTaskLogger(t)
+	retries := 0
+	e := evm{
+		Network:        conf.Polygon,
+		blockScanQueue: queue,
+		blockRetryAfter: func(_ time.Duration, retry func()) {
+			retries++
+			retry()
+		},
+	}
+	e.retryBlock(evmBlock{From: 10, To: 10, Attempt: evmBlockRetryMaxAttempts}, "temporary RPC failure")
+
+	if retries != 0 {
+		t.Fatalf("retry callbacks = %d, want 0 after maximum attempts", retries)
+	}
+	if queue.Len() != 0 {
+		t.Fatalf("queued retries = %d, want 0 after maximum attempts", queue.Len())
 	}
 }
 

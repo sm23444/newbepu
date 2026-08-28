@@ -29,11 +29,18 @@ type aptos struct {
 	heightMu               sync.RWMutex
 	versionQueue           *chanx.UnboundedChan[version]
 	client                 *http.Client
+	retryMu                sync.Mutex
+	retryAttempts          map[version]int
+	progressMu             sync.Mutex
+	forwardProgress        *scanProgress
 }
 
+const aptosVersionRetryMaxAttempts = 5
+
 type version struct {
-	Start int
-	Limit int
+	Start   int
+	Limit   int
+	Forward bool
 }
 
 var apt aptos
@@ -65,6 +72,7 @@ func newAptos() aptos {
 		lastVersion:            0,
 		versionQueue:           chanx.NewUnboundedChan[version](context.Background(), 30),
 		client:                 utils.NewHttpClient(),
+		retryAttempts:          make(map[version]int),
 	}
 }
 
@@ -105,32 +113,30 @@ func (a *aptos) syncVersionForward(ctx context.Context) {
 	}
 
 	a.heightMu.Lock()
-	lastVersion := a.lastVersion
-	if now-lastVersion > 10000 {
-		lastVersion = now - a.versionChunkSize
-	}
-
-	var sub = now - lastVersion
 	a.lastVersion = now
 	a.heightMu.Unlock()
-	if sub <= a.versionChunkSize {
-		a.versionQueue.In <- version{Start: lastVersion, Limit: sub}
-	} else {
-		chunks := (sub + a.versionChunkSize - 1) / a.versionChunkSize
-		for i := 0; i < chunks; i++ {
-			limit := a.versionChunkSize
-			start := lastVersion + a.versionChunkSize*i
-			if i == chunks-1 {
-				limit = sub % a.versionChunkSize
-				if limit == 0 {
-					limit = a.versionChunkSize
-				}
-			}
-
-			a.versionQueue.In <- version{Start: start, Limit: limit}
+	available := blockQueueLimit - a.versionQueue.Len()
+	ranges, err := a.getForwardProgress().schedule(int64(now), int64(a.versionChunkSize), available)
+	if err != nil {
+		log.Task.Warn("Aptos load scan cursor failed:", err)
+		return
+	}
+	for _, item := range ranges {
+		a.versionQueue.In <- version{
+			Start:   int(item.From),
+			Limit:   int(item.To - item.From + 1),
+			Forward: true,
 		}
 	}
+}
 
+func (a *aptos) getForwardProgress() *scanProgress {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	if a.forwardProgress == nil {
+		a.forwardProgress = newScanProgress("aptos")
+	}
+	return a.forwardProgress
 }
 
 func (a *aptos) lookbackVersion(ctx context.Context) {
@@ -185,7 +191,7 @@ func (a *aptos) versionDispatch(ctx context.Context) {
 		select {
 		case n := <-a.versionQueue.Out:
 			if err := p.Invoke(n); err != nil {
-				a.versionQueue.In <- n
+				a.retryVersion(n, fmt.Sprintf("versionDispatch invoke failed: %v", err))
 				log.Task.Warn("versionDispatch Error invoking process slot:", err)
 			}
 		case <-ctx.Done():
@@ -209,7 +215,7 @@ func (a *aptos) versionParse(n any) {
 	resp, err := a.client.Get(url)
 	if err != nil {
 		conf.RecordFailure(net)
-		a.versionQueue.In <- p
+		a.retryVersion(p, fmt.Sprintf("versionParse request failed: %v", err))
 		log.Task.Warn("versionParse Error sending request:", err)
 
 		return
@@ -218,7 +224,7 @@ func (a *aptos) versionParse(n any) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		conf.RecordFailure(net)
-		a.versionQueue.In <- p
+		a.retryVersion(p, fmt.Sprintf("versionParse response status: %d", resp.StatusCode))
 		log.Task.Warn("versionParse Error response status code:", resp.StatusCode)
 
 		return
@@ -227,7 +233,7 @@ func (a *aptos) versionParse(n any) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		conf.RecordFailure(net)
-		a.versionQueue.In <- p
+		a.retryVersion(p, fmt.Sprintf("versionParse read response failed: %v", err))
 		log.Task.Warn("versionParse Error reading response body:", err)
 
 		return
@@ -235,7 +241,7 @@ func (a *aptos) versionParse(n any) {
 
 	if !gjson.ValidBytes(body) {
 		conf.RecordFailure(net)
-		a.versionQueue.In <- p
+		a.retryVersion(p, "versionParse invalid JSON response")
 		log.Task.Warn("versionParse Error: invalid JSON response body")
 
 		return
@@ -243,12 +249,13 @@ func (a *aptos) versionParse(n any) {
 	data := gjson.ParseBytes(body)
 	if !data.IsArray() {
 		conf.RecordFailure(net)
-		a.versionQueue.In <- p
+		a.retryVersion(p, "versionParse response is not an array")
 		log.Task.Warn("versionParse Error: response is not an array")
 
 		return
 	}
-	conf.RecordSuccess(net, cast.ToString(p.Start+p.Limit))
+	conf.RecordSuccess(net, cast.ToString(p.Start+p.Limit-1))
+	a.resetVersionRetry(p)
 
 	transfers := make([]transfer, 0)
 	for _, trans := range data.Array() {
@@ -396,12 +403,43 @@ func (a *aptos) versionParse(n any) {
 		generateTransfers(usdcDeposits, usdcFrom, model.UsdcAptos, model.GetTradeDecimal(model.UsdcAptos))
 	}
 
+	if p.Forward {
+		transfers = attachScanBatch(transfers, completeScanRange(
+			a.getForwardProgress(),
+			scanRange{From: int64(p.Start), To: int64(p.Start + p.Limit - 1)},
+		))
+	}
 	if len(transfers) > 0 {
-
 		transferQueue.In <- transfers
 	}
 
 	log.Task.Info(fmt.Sprintf("区块扫描完成(Aptos) %d.%d 成功率：%s", p.Start, p.Limit, conf.GetSuccessRate(net)))
+}
+
+func (a *aptos) retryVersion(v version, reason string) {
+	a.retryMu.Lock()
+	attempt := a.retryAttempts[v] + 1
+	if attempt > aptosVersionRetryMaxAttempts {
+		delete(a.retryAttempts, v)
+		a.retryMu.Unlock()
+		if v.Forward {
+			a.getForwardProgress().retryLater()
+		}
+		log.Task.Warn(fmt.Sprintf("Aptos version %d-%d retry limit reached: %s", v.Start, v.Limit, reason))
+
+		return
+	}
+	a.retryAttempts[v] = attempt
+	a.retryMu.Unlock()
+
+	a.versionQueue.In <- v
+	log.Task.Warn(fmt.Sprintf("Aptos version %d-%d retry %d/%d: %s", v.Start, v.Limit, attempt, aptosVersionRetryMaxAttempts, reason))
+}
+
+func (a *aptos) resetVersionRetry(v version) {
+	a.retryMu.Lock()
+	delete(a.retryAttempts, v)
+	a.retryMu.Unlock()
 }
 
 func (a *aptos) parseTransactions(data gjson.Result) []transfer {

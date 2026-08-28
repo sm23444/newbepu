@@ -46,13 +46,13 @@ func StoreExchangeTransactions(rows []ExchangeTransaction) error {
 	return Db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
 }
 
-func PendingExchangeTransactions(provider string, tradeType TradeType, since time.Time, afterID int64, limit int) ([]ExchangeTransaction, int64, error) {
+func PendingExchangeTransactions(provider string, tradeType TradeType, afterID int64, limit int) ([]ExchangeTransaction, int64, error) {
 	var rows []ExchangeTransaction
 	if limit <= 0 {
 		limit = 500
 	}
 
-	query := Db.Where("provider = ? and trade_type = ? and status = ? and occurred_at >= ?", provider, tradeType, ExchangeTransactionPending, since)
+	query := Db.Where("provider = ? and trade_type = ? and status = ?", provider, tradeType, ExchangeTransactionPending)
 	if afterID > 0 {
 		query = query.Where("id > ?", afterID)
 	}
@@ -225,5 +225,5 @@ func MarkExchangeTransactionProcessed(provider, transactionID string, orderID in
 }
 
 func DeleteExchangeTransactionsBefore(cutoff time.Time) error {
-	return Db.Where("occurred_at < ?", cutoff).Delete(&ExchangeTransaction{}).Error
+	return Db.Where("occurred_at < ? and status = ?", cutoff, ExchangeTransactionProcessed).Delete(&ExchangeTransaction{}).Error
 }

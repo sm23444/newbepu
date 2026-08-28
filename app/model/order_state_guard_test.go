@@ -1,6 +1,8 @@
 package model
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -103,6 +105,194 @@ func TestMarkConfirmingDoesNotReplaceExistingTransaction(t *testing.T) {
 	}
 	if persisted.RefHash != "first-hash" || persisted.RefBlockNum != 10 {
 		t.Fatalf("existing transaction was replaced: ref_hash=%q block=%d", persisted.RefHash, persisted.RefBlockNum)
+	}
+}
+
+func TestMarkConfirmingClaimsTransactionOnlyOnce(t *testing.T) {
+	db := newTestDB(t, "mark-confirming-transaction-claim")
+	now := time.Now()
+	first := stateGuardOrder(now, OrderStatusWaiting, "first-pending-reference")
+	first.OrderId = "first-order"
+	first.TradeId = "first-trade"
+	second := stateGuardOrder(now, OrderStatusWaiting, "second-pending-reference")
+	second.OrderId = "second-order"
+	second.TradeId = "second-trade"
+	if err := db.Create(&first).Error; err != nil {
+		t.Fatalf("create first order: %v", err)
+	}
+	if err := db.Create(&second).Error; err != nil {
+		t.Fatalf("create second order: %v", err)
+	}
+
+	const txHash = "0xABCDEF"
+	if err := first.MarkConfirming(100, "first-sender", txHash, now, decimal.NewFromInt(1)); err != nil {
+		t.Fatalf("first order claim: %v", err)
+	}
+	if err := second.MarkConfirming(100, "second-sender", txHash, now, decimal.NewFromInt(1)); !errors.Is(err, ErrPaymentTransactionAlreadyClaimed) {
+		t.Fatalf("second order claim error = %v, want ErrPaymentTransactionAlreadyClaimed", err)
+	}
+
+	var persisted []Order
+	if err := db.Order("id asc").Find(&persisted).Error; err != nil {
+		t.Fatalf("load orders: %v", err)
+	}
+	if len(persisted) != 2 {
+		t.Fatalf("order count = %d, want 2", len(persisted))
+	}
+	if persisted[0].Status != OrderStatusConfirming || persisted[0].RefHash != "0xabcdef" {
+		t.Fatalf("first order status/ref = %d/%q", persisted[0].Status, persisted[0].RefHash)
+	}
+	if persisted[1].Status != OrderStatusWaiting || persisted[1].RefHash != "second-pending-reference" {
+		t.Fatalf("second order changed: status/ref = %d/%q", persisted[1].Status, persisted[1].RefHash)
+	}
+
+	var claimCount int64
+	if err := db.Model(&PaymentTransactionClaim{}).Count(&claimCount).Error; err != nil {
+		t.Fatalf("count transaction claims: %v", err)
+	}
+	if claimCount != 1 {
+		t.Fatalf("transaction claim count = %d, want 1", claimCount)
+	}
+}
+
+func TestMarkConfirmingConcurrentClaimsHaveOneWinner(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "mark-confirming-concurrent-transaction-claim.db")
+	db, err := gorm.Open(sqlite.Open(dbPath+"?cache=shared&mode=rwc&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open concurrent test db: %v", err)
+	}
+	if err := db.AutoMigrate(&Order{}, &PaymentTransactionClaim{}); err != nil {
+		t.Fatalf("migrate concurrent test db: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(4)
+	oldDB := Db
+	Db = db
+	t.Cleanup(func() {
+		Db = oldDB
+		_ = sqlDB.Close()
+	})
+
+	now := time.Now()
+	orders := []Order{
+		stateGuardOrder(now, OrderStatusWaiting, "first-pending-reference"),
+		stateGuardOrder(now, OrderStatusWaiting, "second-pending-reference"),
+	}
+	for i := range orders {
+		orders[i].OrderId = fmt.Sprintf("concurrent-order-%d", i)
+		orders[i].TradeId = fmt.Sprintf("concurrent-trade-%d", i)
+		if err := db.Create(&orders[i]).Error; err != nil {
+			t.Fatalf("create order %d: %v", i, err)
+		}
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, len(orders))
+	var wg sync.WaitGroup
+	for i := range orders {
+		wg.Add(1)
+		go func(order *Order) {
+			defer wg.Done()
+			<-start
+			results <- order.MarkConfirming(100, "sender", "0xABCDEF", now, decimal.NewFromInt(1))
+		}(&orders[i])
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	conflicts := 0
+	for err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrPaymentTransactionAlreadyClaimed):
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent claim error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("claim results: successes=%d conflicts=%d, want 1/1", successes, conflicts)
+	}
+
+	var confirmingCount int64
+	if err := db.Model(&Order{}).Where("status = ? AND ref_hash = ?", OrderStatusConfirming, "0xabcdef").Count(&confirmingCount).Error; err != nil {
+		t.Fatalf("count confirming orders: %v", err)
+	}
+	if confirmingCount != 1 {
+		t.Fatalf("confirming order count = %d, want 1", confirmingCount)
+	}
+
+	var claimCount int64
+	if err := db.Model(&PaymentTransactionClaim{}).Where("network = ? AND tx_hash = ?", "tron", "0xabcdef").Count(&claimCount).Error; err != nil {
+		t.Fatalf("count transaction claims: %v", err)
+	}
+	if claimCount != 1 {
+		t.Fatalf("transaction claim count = %d, want 1", claimCount)
+	}
+}
+
+func TestMarkConfirmingRejectsLegacyTransactionReference(t *testing.T) {
+	db := newTestDB(t, "mark-confirming-legacy-claim")
+	now := time.Now()
+	legacy := stateGuardOrder(now, OrderStatusSuccess, "0xABCDEF")
+	legacy.OrderId = "legacy-order"
+	legacy.TradeId = "legacy-trade"
+	pending := stateGuardOrder(now, OrderStatusWaiting, "pending-reference")
+	pending.OrderId = "pending-order"
+	pending.TradeId = "pending-trade"
+	if err := db.Create(&legacy).Error; err != nil {
+		t.Fatalf("create legacy order: %v", err)
+	}
+	if err := db.Create(&pending).Error; err != nil {
+		t.Fatalf("create pending order: %v", err)
+	}
+
+	err := pending.MarkConfirming(100, "sender", "0xabcdef", now, decimal.NewFromInt(1))
+	if !errors.Is(err, ErrPaymentTransactionAlreadyClaimed) {
+		t.Fatalf("legacy duplicate error = %v, want ErrPaymentTransactionAlreadyClaimed", err)
+	}
+
+	var claimCount int64
+	if err := db.Model(&PaymentTransactionClaim{}).Count(&claimCount).Error; err != nil {
+		t.Fatalf("count transaction claims: %v", err)
+	}
+	if claimCount != 0 {
+		t.Fatalf("legacy duplicate created %d claim rows, want 0", claimCount)
+	}
+}
+
+func TestMarkConfirmingIgnoresWaitingOrderReferencePlaceholder(t *testing.T) {
+	db := newTestDB(t, "mark-confirming-waiting-reference-placeholder")
+	now := time.Now()
+	placeholder := stateGuardOrder(now, OrderStatusWaiting, "0xABCDEF")
+	placeholder.OrderId = "placeholder-order"
+	placeholder.TradeId = "placeholder-trade"
+	pending := stateGuardOrder(now, OrderStatusWaiting, "pending-reference")
+	pending.OrderId = "pending-order"
+	pending.TradeId = "pending-trade"
+	if err := db.Create(&placeholder).Error; err != nil {
+		t.Fatalf("create placeholder order: %v", err)
+	}
+	if err := db.Create(&pending).Error; err != nil {
+		t.Fatalf("create pending order: %v", err)
+	}
+
+	if err := pending.MarkConfirming(100, "sender", "0xabcdef", now, decimal.NewFromInt(1)); err != nil {
+		t.Fatalf("waiting placeholder blocked real transaction claim: %v", err)
+	}
+
+	var persisted Order
+	if err := db.First(&persisted, pending.ID).Error; err != nil {
+		t.Fatalf("reload pending order: %v", err)
+	}
+	if persisted.Status != OrderStatusConfirming || persisted.RefHash != "0xabcdef" {
+		t.Fatalf("pending order status/ref = %d/%q", persisted.Status, persisted.RefHash)
 	}
 }
 
@@ -309,6 +499,14 @@ func TestMarkConfirmingRejectsCanceledOrder(t *testing.T) {
 	if persisted.RefHash != "" {
 		t.Fatalf("ref_hash was written despite rejection: %q", persisted.RefHash)
 	}
+
+	var claimCount int64
+	if err := db.Model(&PaymentTransactionClaim{}).Count(&claimCount).Error; err != nil {
+		t.Fatalf("count transaction claims: %v", err)
+	}
+	if claimCount != 0 {
+		t.Fatalf("rejected order left %d transaction claims, want 0", claimCount)
+	}
 }
 
 func stateGuardOrder(now time.Time, status int, refHash string) Order {
@@ -330,7 +528,7 @@ func newTestDB(t *testing.T, name string) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	if err := db.AutoMigrate(&Order{}); err != nil {
+	if err := db.AutoMigrate(&Order{}, &PaymentTransactionClaim{}); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 	oldDB := Db

@@ -104,11 +104,14 @@ func (c *OKXClient) ListIncoming(ctx context.Context, asset string, start, end t
 			if len(payload.Data) < 100 {
 				break
 			}
-			lastTimestamp, err := scalarInt64(payload.Data[len(payload.Data)-1].Timestamp)
+			lastBillID, err := scalarString(payload.Data[len(payload.Data)-1].BillID)
 			if err != nil {
 				return nil, fmt.Errorf("OKX funding bill cursor is invalid")
 			}
-			nextAfter := strconv.FormatInt(normalizeMillis(lastTimestamp), 10)
+			nextAfter := strings.TrimSpace(lastBillID)
+			if nextAfter == "" {
+				return nil, fmt.Errorf("OKX funding bill cursor is invalid")
+			}
 			if nextAfter == after {
 				return nil, fmt.Errorf("OKX funding bill cursor did not advance")
 			}

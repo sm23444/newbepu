@@ -105,6 +105,13 @@ func ClaimManualPayment(order *Order, network, txHash string, blockNum int, from
 			return ErrManualPaymentAlreadyClaimed
 		}
 
+		if err := ClaimPaymentTransactionTx(tx, order, network, txHash); err != nil {
+			if errors.Is(err, ErrPaymentTransactionAlreadyClaimed) {
+				return ErrManualPaymentAlreadyClaimed
+			}
+			return err
+		}
+
 		if err := tx.Create(&ManualPaymentClaim{Network: network, TxHash: txHash, TradeID: order.TradeId}).Error; err != nil {
 			message := strings.ToLower(err.Error())
 			if strings.Contains(message, "unique constraint") || strings.Contains(message, "duplicate key") {

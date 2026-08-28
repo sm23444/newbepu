@@ -29,6 +29,7 @@ import (
 const (
 	blockParseMaxNum                 = 10 // 每次解析区块的最大数量
 	evmTransferEvent                 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	evmBlockRetryMaxAttempts         = 5
 	evmBlockRetryBaseDelay           = 500 * time.Millisecond
 	evmBlockRetryMaxDelay            = 15 * time.Second
 	evmReceiptAnomalyThreshold       = 6
@@ -59,12 +60,15 @@ type evm struct {
 	blockRetryAfter  func(time.Duration, func())
 	receiptMu        sync.Mutex
 	receiptAnomalies map[evmReceiptKey]evmReceiptAnomaly
+	progressMu       sync.Mutex
+	forwardProgress  *scanProgress
 }
 
 type evmBlock struct {
 	From    int64
 	To      int64
 	Attempt int
+	Forward bool
 }
 
 type evmRPCRequest struct {
@@ -193,14 +197,22 @@ func splitEVMBlockRange(b evmBlock) []evmBlock {
 
 	middle := b.From + (b.To-b.From)/2
 	return []evmBlock{
-		{From: b.From, To: middle, Attempt: b.Attempt},
-		{From: middle + 1, To: b.To, Attempt: b.Attempt},
+		{From: b.From, To: middle, Attempt: b.Attempt, Forward: b.Forward},
+		{From: middle + 1, To: b.To, Attempt: b.Attempt, Forward: b.Forward},
 	}
 }
 
 func (e *evm) retryBlock(b evmBlock, reason string) {
 	conf.RecordFailure(e.Network)
 	b.Attempt++
+	if b.Attempt > evmBlockRetryMaxAttempts {
+		if b.Forward {
+			e.getForwardProgress().retryLater()
+		}
+		log.Task.Warn(fmt.Sprintf("%s; retry limit reached for blocks %d-%d", reason, b.From, b.To))
+
+		return
+	}
 	retries := []evmBlock{b}
 	if shouldSplitEVMBlockRange(reason) && b.From < b.To {
 		retries = splitEVMBlockRange(b)
@@ -281,30 +293,25 @@ func (e *evm) syncBlocksForward(ctx context.Context) {
 		return
 	}
 
-	var lastBlockNumber int64
-	if v, ok := chainBlockNum.Load(e.Network); ok {
-		lastBlockNumber = v.(int64)
-	}
-
-	if now-lastBlockNumber > cast.ToInt64(model.GetC(model.BlockHeightMaxDiff)) {
-
-		lastBlockNumber = now - 1
-	}
-
 	chainBlockNum.Store(e.Network, now)
-	if now <= lastBlockNumber {
-
+	available := blockQueueLimit - e.blockScanQueue.Len()
+	ranges, err := e.getForwardProgress().schedule(now, blockParseMaxNum, available)
+	if err != nil {
+		log.Task.Warn(e.Network, " load scan cursor failed:", err)
 		return
 	}
-
-	for from := lastBlockNumber + 1; from <= now; from += blockParseMaxNum {
-		to := from + blockParseMaxNum - 1
-		if to > now {
-			to = now
-		}
-
-		e.blockScanQueue.In <- evmBlock{From: from, To: to}
+	for _, item := range ranges {
+		e.blockScanQueue.In <- evmBlock{From: item.From, To: item.To, Forward: true}
 	}
+}
+
+func (e *evm) getForwardProgress() *scanProgress {
+	e.progressMu.Lock()
+	defer e.progressMu.Unlock()
+	if e.forwardProgress == nil {
+		e.forwardProgress = newScanProgress("evm:" + strings.ToLower(strings.TrimSpace(e.Network)))
+	}
+	return e.forwardProgress
 }
 
 func (e *evm) lookbackBlocks(ctx context.Context) {
@@ -502,11 +509,15 @@ func (e *evm) getBlockByNumber(a any) {
 	}
 	conf.RecordSuccess(e.Network, cast.ToString(b.To))
 
-	if len(nativeTransfers) > 0 {
-		transferQueue.In <- nativeTransfers
+	allTransfers := append(nativeTransfers, transfers...)
+	if b.Forward {
+		allTransfers = attachScanBatch(allTransfers, completeScanRange(
+			e.getForwardProgress(),
+			scanRange{From: b.From, To: b.To},
+		))
 	}
-	if len(transfers) > 0 {
-		transferQueue.In <- transfers
+	if len(allTransfers) > 0 {
+		transferQueue.In <- allTransfers
 	}
 
 	log.Task.Info(fmt.Sprintf("区块扫描完成(%s): %d → %d 成功率：%s", e.Network, b.From, b.To, conf.GetSuccessRate(e.Network)))
@@ -996,7 +1007,7 @@ func syncBreak(network string, num int) bool {
 
 	var count int64
 	result := model.Db.Model(&model.Wallet{}).
-		Where("other_notify = ? and trade_type in (?)", model.WaOtherEnable, trades).
+		Where("(status = ? or other_notify = ?) and trade_type in (?)", model.WaStatusEnable, model.WaOtherEnable, trades).
 		Count(&count)
 	if result.Error != nil {
 		log.Task.Warn(network, " wallet query failed:", result.Error)

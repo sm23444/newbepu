@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ type transfer struct {
 	Final       bool            `json:"final"`
 	Source      string          `json:"source"`
 	SourceID    string          `json:"source_id"`
+	scanAck     *scanBatchAck
 }
 
 type resource struct {
@@ -96,7 +98,7 @@ func orderTransferHandle(ctx context.Context) {
 
 			var other = make([]transfer, 0)
 			var retry = make([]transfer, 0)
-			orders, err := getReceivableOrders()
+			orders, err := getReceivableOrders(batch)
 			if err != nil {
 				log.Task.Warn("load receivable orders failed:", err)
 				continue
@@ -105,6 +107,7 @@ func orderTransferHandle(ctx context.Context) {
 			for _, t := range batch {
 				// 判断数额是否在允许范围内
 				if !model.IsAmountValid(t.TradeType, t.Amount) {
+					acknowledgeTransfer(t)
 					continue
 				}
 
@@ -118,6 +121,8 @@ func orderTransferHandle(ctx context.Context) {
 				}
 
 				var matched bool
+				var discarded bool
+				var retrying bool
 				for i, o := range orderList {
 					if !orderTransferMatch(o, t) {
 						continue
@@ -132,19 +137,29 @@ func orderTransferHandle(ctx context.Context) {
 						if err := model.CompleteExchangeTransaction(&o, t.Source, t.SourceID, t.BlockNum, t.FromAddress, t.Timestamp, t.Amount); err != nil {
 							log.Task.Warn("complete exchange transaction failed:", err)
 							retry = append(retry, t)
-							continue
+							retrying = true
+							break
 						}
 						notifyOrderSuccess(o)
 					} else {
 						if err := o.MarkConfirming(t.BlockNum, t.FromAddress, t.TxHash, t.Timestamp, t.Amount); err != nil {
 							log.Task.Warn("mark order confirming failed:", err)
+							if errors.Is(err, model.ErrPaymentTransactionAlreadyClaimed) {
+								// The transfer is already accounted for. Keep the current
+								// order in the candidate list for another transfer, but do
+								// not retry or report this one as unmatched.
+								discarded = true
+								break
+							}
 							retry = append(retry, t)
-							continue
+							retrying = true
+							break
 						}
 						if t.Final {
 							if err := markFinalConfirmed(o); err != nil {
 								retry = append(retry, t)
-								continue
+								retrying = true
+								break
 							}
 						}
 					}
@@ -155,8 +170,11 @@ func orderTransferHandle(ctx context.Context) {
 					break
 				}
 
-				if !matched && t.Source == "" {
+				if !matched && !discarded && t.Source == "" {
 					other = append(other, t)
+				}
+				if !retrying && (matched || discarded || t.Source != "") {
+					acknowledgeTransfer(t)
 				}
 			}
 
@@ -226,7 +244,10 @@ func notOrderTransferHandle(ctx context.Context) {
 			}
 
 			var was = make([]model.Wallet, 0)
-			model.Db.Where("other_notify = ?", model.WaOtherEnable).Find(&was)
+			if err := model.Db.Where("other_notify = ?", model.WaOtherEnable).Find(&was).Error; err != nil {
+				log.Task.Warn("load non-order notification wallets failed:", err)
+				continue
+			}
 			for _, wa := range was {
 				for _, t := range batch {
 					if t.RecvAddress != wa.MatchAddr && t.FromAddress != wa.MatchAddr {
@@ -251,6 +272,9 @@ func notOrderTransferHandle(ctx context.Context) {
 						BlockNum:    t.BlockNum,
 					}, wa)
 				}
+			}
+			for _, item := range batch {
+				acknowledgeTransfer(item)
 			}
 
 			batch = batch[:0]
@@ -365,11 +389,32 @@ func receivableOrderStatuses() []int {
 	return []int{model.OrderStatusWaiting, model.OrderStatusExpired, model.OrderStatusConfirming}
 }
 
-func getReceivableOrders() (map[string][]model.Order, error) {
+func getReceivableOrders(transfers []transfer) (map[string][]model.Order, error) {
 	var orders []model.Order
 	db := model.Db.Where("status in (?)", receivableOrderStatuses()).
-		Where("expired_at > ?", time.Now().Add(model.GetLookbackHour())).
 		Order("created_at asc")
+	if len(transfers) > 0 {
+		startAt := transfers[0].Timestamp
+		endAt := transfers[0].Timestamp
+		tradeTypes := make([]model.TradeType, 0)
+		seen := make(map[model.TradeType]struct{})
+		for _, item := range transfers {
+			if item.Timestamp.Before(startAt) {
+				startAt = item.Timestamp
+			}
+			if item.Timestamp.After(endAt) {
+				endAt = item.Timestamp
+			}
+			if _, exists := seen[item.TradeType]; !exists {
+				seen[item.TradeType] = struct{}{}
+				tradeTypes = append(tradeTypes, item.TradeType)
+			}
+		}
+		db = db.Where("created_at < ? and expired_at > ?", endAt, startAt)
+		if len(tradeTypes) > 0 {
+			db = db.Where("trade_type in (?)", tradeTypes)
+		}
+	}
 	if err := db.Find(&orders).Error; err != nil {
 		return nil, err
 	}

@@ -32,16 +32,25 @@ var gasFreeContractAddress = []byte{0x41, 0x39, 0xdd, 0x12, 0xa5, 0x4e, 0x2b, 0x
 var usdtTrc20ContractAddress = []byte{0x41, 0xa6, 0x14, 0xf8, 0x03, 0xb6, 0xfd, 0x78, 0x09, 0x86, 0xa4, 0x2c, 0x78, 0xec, 0x9c, 0x7f, 0x77, 0xe6, 0xde, 0xd1, 0x3c}
 var usdcTrc20ContractAddress = []byte{0x41, 0x34, 0x87, 0xb6, 0x3d, 0x30, 0xb5, 0xb2, 0xc8, 0x7f, 0xb7, 0xff, 0xa8, 0xbc, 0xfa, 0xde, 0x38, 0xea, 0xac, 0x1a, 0xbe}
 
+const tronBlockRetryMaxAttempts = 5
+
 type tron struct {
 	lastBlockNum         int
 	heightMu             sync.RWMutex
 	blockConfirmedOffset int
-	blockScanQueue       *chanx.UnboundedChan[int]
+	blockScanQueue       *chanx.UnboundedChan[tronBlock]
 	conn                 map[string]*grpc.ClientConn
 	connMu               sync.RWMutex
 	retryMu              sync.Mutex
 	retryAttempts        map[int]int
 	retryScheduled       map[int]*time.Timer
+	progressMu           sync.Mutex
+	forwardProgress      *scanProgress
+}
+
+type tronBlock struct {
+	Number  int
+	Forward bool
 }
 
 var tr tron
@@ -58,7 +67,7 @@ func newTron() tron {
 	return tron{
 		lastBlockNum:         0,
 		blockConfirmedOffset: 30,
-		blockScanQueue:       chanx.NewUnboundedChan[int](context.Background(), 30),
+		blockScanQueue:       chanx.NewUnboundedChan[tronBlock](context.Background(), 30),
 		conn:                 make(map[string]*grpc.ClientConn),
 		retryAttempts:        make(map[int]int),
 		retryScheduled:       make(map[int]*time.Timer),
@@ -91,27 +100,28 @@ func (t *tron) syncBlocksForward(context.Context) {
 
 	var now = int(block.BlockHeader.RawData.Number)
 
-	// 区块高度变化过大，强制丢块重扫
 	t.heightMu.Lock()
-	lastBlockNum := t.lastBlockNum
-	if now-lastBlockNum > cast.ToInt(model.GetC(model.BlockHeightMaxDiff)) {
-		lastBlockNum = now - 1
-	}
-
-	// 区块高度没有变化
-	if now == lastBlockNum {
-		t.heightMu.Unlock()
-
-		return
-	}
 	t.lastBlockNum = now
 	t.heightMu.Unlock()
 
-	// 待扫描区块入列
-	for n := lastBlockNum + 1; n <= now; n++ {
-
-		t.blockScanQueue.In <- n
+	available := blockQueueLimit - t.blockScanQueue.Len()
+	ranges, err := t.getForwardProgress().schedule(int64(now), 1, available)
+	if err != nil {
+		log.Task.Warn("Tron load scan cursor failed:", err)
+		return
 	}
+	for _, item := range ranges {
+		t.blockScanQueue.In <- tronBlock{Number: int(item.From), Forward: true}
+	}
+}
+
+func (t *tron) getForwardProgress() *scanProgress {
+	t.progressMu.Lock()
+	defer t.progressMu.Unlock()
+	if t.forwardProgress == nil {
+		t.forwardProgress = newScanProgress("tron")
+	}
+	return t.forwardProgress
 }
 
 func (t *tron) lookbackBlocks(ctx context.Context) {
@@ -142,7 +152,7 @@ func (t *tron) lookbackBlocks(ctx context.Context) {
 		if t.syncBreak() {
 			return
 		}
-		t.blockScanQueue.In <- i
+		t.blockScanQueue.In <- tronBlock{Number: i}
 		time.Sleep(time.Millisecond * 250) // 速率控制
 	}
 	markLookbackDone(window)
@@ -162,12 +172,12 @@ func (t *tron) blockDispatch(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case n, ok := <-t.blockScanQueue.Out:
+		case block, ok := <-t.blockScanQueue.Out:
 			if !ok {
 				return
 			}
-			if err := p.Invoke(n); err != nil {
-				t.scheduleBlockRetry(n, 0)
+			if err := p.Invoke(block); err != nil {
+				t.scheduleBlockRetry(block, 0)
 
 				log.Task.Warn("Tron Error invoking process block:", err)
 			}
@@ -176,13 +186,14 @@ func (t *tron) blockDispatch(ctx context.Context) {
 }
 
 func (t *tron) blockParse(n any) {
-	var num = n.(int)
+	block := n.(tronBlock)
+	var num = block.Number
 
 	var conn *grpc.ClientConn
 	var err error
 	if conn, err = t.client(); err != nil {
 		conf.RecordFailure(conf.Tron)
-		t.scheduleBlockRetry(num, 0)
+		t.scheduleBlockRetry(block, 0)
 		log.Task.Error("grpc.NewClient", err)
 
 		return
@@ -193,14 +204,14 @@ func (t *tron) blockParse(n any) {
 	cancel()
 	if err2 != nil {
 		conf.RecordFailure(conf.Tron)
-		t.scheduleBlockRetry(num, 0)
+		t.scheduleBlockRetry(block, 0)
 		log.Task.Warn("GetBlockByNum2 ", err2)
 
 		return
 	}
 	if bok == nil || bok.GetBlockHeader() == nil {
 		conf.RecordFailure(conf.Tron)
-		t.scheduleBlockRetry(num, 0)
+		t.scheduleBlockRetry(block, 0)
 		log.Task.Warn("GetBlockByNum2 returned an empty block")
 
 		return
@@ -213,7 +224,7 @@ func (t *tron) blockParse(n any) {
 	var transfers = make([]transfer, 0)
 	var timestamp = time.UnixMilli(bok.GetBlockHeader().GetRawData().GetTimestamp())
 	for _, trans := range bok.GetTransactions() {
-		if !trans.Result.Result {
+		if !tronBlockTransactionSucceeded(trans) {
 
 			continue
 		}
@@ -357,6 +368,13 @@ func (t *tron) blockParse(n any) {
 		}
 	}
 
+	progress := t.getForwardProgress()
+	if block.Forward || progress.isScheduled(int64(num)) {
+		transfers = attachScanBatch(transfers, completeScanRange(
+			progress,
+			scanRange{From: int64(num), To: int64(num)},
+		))
+	}
 	if len(transfers) > 0 {
 		transferQueue.In <- transfers
 	}
@@ -580,6 +598,14 @@ func tronTransactionSucceeded(trans *core.Transaction) bool {
 	return len(ret) > 0 && ret[0].GetContractRet() == core.Transaction_Result_SUCCESS
 }
 
+func tronBlockTransactionSucceeded(trans *api.TransactionExtention) bool {
+	if trans == nil || trans.GetResult() == nil || !trans.GetResult().GetResult() {
+		return false
+	}
+
+	return tronTransactionSucceeded(trans.GetTransaction())
+}
+
 func (t *tron) base58CheckEncode(input []byte) string {
 	checksum := chainhash.DoubleHashB(input)
 	checksum = checksum[:4]
@@ -607,7 +633,9 @@ func (t *tron) syncBreak() bool {
 	}
 
 	var count int64 = 0
-	result := model.Db.Model(&model.Wallet{}).Where("other_notify = ? and trade_type in (?)", model.WaOtherEnable, trade).Count(&count)
+	result := model.Db.Model(&model.Wallet{}).
+		Where("(status = ? or other_notify = ?) and trade_type in (?)", model.WaStatusEnable, model.WaOtherEnable, trade).
+		Count(&count)
 	if result.Error != nil {
 		log.Task.Warn("tron wallet query failed:", result.Error)
 		return false
@@ -620,7 +648,8 @@ func (t *tron) syncBreak() bool {
 	return true
 }
 
-func (t *tron) scheduleBlockRetry(num int, delay time.Duration) {
+func (t *tron) scheduleBlockRetry(block tronBlock, delay time.Duration) {
+	num := block.Number
 	t.retryMu.Lock()
 	if _, ok := t.retryScheduled[num]; ok {
 		t.retryMu.Unlock()
@@ -629,6 +658,17 @@ func (t *tron) scheduleBlockRetry(num int, delay time.Duration) {
 	}
 
 	attempt := t.retryAttempts[num] + 1
+	if attempt > tronBlockRetryMaxAttempts {
+		delete(t.retryAttempts, num)
+		t.retryMu.Unlock()
+		progress := t.getForwardProgress()
+		if block.Forward || progress.isScheduled(int64(num)) {
+			progress.retryLater()
+		}
+		log.Task.Warn("Tron 区块达到重试上限：", num)
+
+		return
+	}
 	t.retryAttempts[num] = attempt
 
 	if delay <= 0 {
@@ -648,12 +688,12 @@ func (t *tron) scheduleBlockRetry(num int, delay time.Duration) {
 
 		if t.blockScanQueue.Len() >= blockQueueLimit {
 			log.Task.Warn("Tron 重试延后，当前区块消费堆积数量：", t.blockScanQueue.Len())
-			t.scheduleBlockRetry(num, delay)
+			t.scheduleBlockRetry(block, delay)
 
 			return
 		}
 
-		t.blockScanQueue.In <- num
+		t.blockScanQueue.In <- block
 	})
 	t.retryScheduled[num] = timer
 	t.retryMu.Unlock()

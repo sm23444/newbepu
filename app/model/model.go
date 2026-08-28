@@ -149,9 +149,11 @@ func AutoMigrate() error {
 		&Order{},
 		&NotifyRecord{},
 		&ManualPaymentClaim{},
+		&PaymentTransactionClaim{},
 		&Conf{},
 		&Rate{},
 		&ExchangeTransaction{},
+		&ScanCursor{},
 	})
 }
 

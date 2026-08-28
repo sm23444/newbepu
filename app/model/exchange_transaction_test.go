@@ -91,7 +91,7 @@ func TestPendingExchangeTransactionsRotatesPastBatchLimit(t *testing.T) {
 		t.Fatalf("create transactions: %v", err)
 	}
 
-	pending, cursor, err := PendingExchangeTransactions("okx", UsdtOKX, start.Add(-time.Second), 0, 500)
+	pending, cursor, err := PendingExchangeTransactions("okx", UsdtOKX, 0, 500)
 	if err != nil {
 		t.Fatalf("query pending transactions: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestPendingExchangeTransactionsRotatesPastBatchLimit(t *testing.T) {
 		t.Fatal("first full page did not advance the pending cursor")
 	}
 
-	next, cursor, err := PendingExchangeTransactions("okx", UsdtOKX, start.Add(-time.Second), cursor, 500)
+	next, cursor, err := PendingExchangeTransactions("okx", UsdtOKX, cursor, 500)
 	if err != nil {
 		t.Fatalf("query second pending page: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestPendingExchangeTransactionsBatchMarksLinkedOrders(t *testing.T) {
 		t.Fatalf("create transactions: %v", err)
 	}
 
-	pending, _, err := PendingExchangeTransactions("okx", UsdtOKX, now.Add(-time.Second), 0, 10)
+	pending, _, err := PendingExchangeTransactions("okx", UsdtOKX, 0, 10)
 	if err != nil {
 		t.Fatalf("query pending transactions: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestPendingExchangeTransactionsIsolatesTradeTypes(t *testing.T) {
 		t.Fatalf("create transactions: %v", err)
 	}
 
-	pendingUSDT, cursor, err := PendingExchangeTransactions("okx", UsdtOKX, now.Add(-time.Second), 0, 10)
+	pendingUSDT, cursor, err := PendingExchangeTransactions("okx", UsdtOKX, 0, 10)
 	if err != nil {
 		t.Fatalf("query USDT transactions: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestPendingExchangeTransactionsIsolatesTradeTypes(t *testing.T) {
 		t.Fatalf("USDT cursor = %d, want 0 for its final page", cursor)
 	}
 
-	pendingUSDC, _, err := PendingExchangeTransactions("okx", UsdcOKX, now.Add(-time.Second), 0, 10)
+	pendingUSDC, _, err := PendingExchangeTransactions("okx", UsdcOKX, 0, 10)
 	if err != nil {
 		t.Fatalf("query USDC transactions: %v", err)
 	}

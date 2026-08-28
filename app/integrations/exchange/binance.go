@@ -40,6 +40,7 @@ type binanceFund struct {
 type binanceHistoryRow struct {
 	Amount          string          `json:"amount"`
 	Currency        string          `json:"currency"`
+	OrderType       string          `json:"orderType"`
 	FundsDetail     []binanceFund   `json:"fundsDetail"`
 	ReceiverInfo    binanceReceiver `json:"receiverInfo"`
 	TransactionID   json.RawMessage `json:"transactionId"`
@@ -122,6 +123,9 @@ func (c *BinanceClient) ListIncoming(ctx context.Context, asset string, start, e
 		if err != nil || receiverUID != c.config.ReceiverUID {
 			continue
 		}
+		if !isSupportedBinanceOrderType(row.OrderType) {
+			continue
+		}
 		// Top-level fields describe the received transaction; fundsDetail only
 		// describes the assets used to fund a combination payment.
 		if strings.ToUpper(strings.TrimSpace(row.Currency)) != asset {
@@ -155,6 +159,17 @@ func (c *BinanceClient) ListIncoming(ctx context.Context, asset string, start, e
 		return transactions[i].OccurredAt.Before(transactions[j].OccurredAt)
 	})
 	return transactions, nil
+}
+
+// Positive amount alone is not enough: only direct UID transfers and merchant
+// payments can represent a customer payment for this gateway.
+func isSupportedBinanceOrderType(orderType string) bool {
+	switch strings.ToUpper(strings.TrimSpace(orderType)) {
+	case "C2C", "PAY":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *BinanceClient) history(ctx context.Context, startMS, endMS int64) ([]binanceHistoryRow, error) {

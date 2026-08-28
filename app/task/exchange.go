@@ -26,6 +26,11 @@ type exchangeRuntime struct {
 	cleaned        time.Time
 }
 
+const (
+	exchangeRecoveryChunk = 24 * time.Hour
+	exchangeScanOverlap   = 5 * time.Minute
+)
+
 func init() {
 	Register(Task{Callback: exchangePollingLoop})
 }
@@ -179,34 +184,66 @@ func TestExchangePayment(ctx context.Context, provider string) (int, error) {
 
 func pollExchange(ctx context.Context, client exchange.Client, asset string, pendingCursor int64) int64 {
 	tradeType := model.GetExchangeTradeType(client.Provider(), asset)
-	if tradeType == "" || !hasLookbackOrders([]model.TradeType{tradeType}) {
+	if tradeType == "" {
 		return pendingCursor
 	}
 
 	now := time.Now()
-	start := now.Add(model.GetLookbackHour())
-	transactions, err := client.ListIncoming(ctx, asset, start, now)
+	cursorKey := "exchange:" + exchangeCursorKey(client.Provider(), asset)
+	position, found, err := model.LoadScanCursor(cursorKey)
 	if err != nil {
-		log.Task.Warn(client.Provider(), " ", asset, " exchange payment scan failed:", err)
+		log.Task.Warn(client.Provider(), " ", asset, " exchange cursor load failed:", err)
 		return pendingCursor
 	}
-	rows := make([]model.ExchangeTransaction, 0, len(transactions))
-	for _, transaction := range transactions {
-		rows = append(rows, model.ExchangeTransaction{
-			Provider:      transaction.Provider,
-			TransactionID: transaction.TransactionID,
-			TradeType:     tradeType,
-			Asset:         transaction.Asset,
-			Amount:        transaction.Amount.String(),
-			ReceiverUID:   transaction.ReceiverUID,
-			OccurredAt:    transaction.OccurredAt,
-		})
+	if !found {
+		position = now.Add(model.GetLookbackHour()).UnixMilli()
+		if err := model.SaveScanCursor(cursorKey, position); err != nil {
+			log.Task.Warn(client.Provider(), " ", asset, " exchange cursor initialize failed:", err)
+			return pendingCursor
+		}
 	}
-	if err := model.StoreExchangeTransactions(rows); err != nil {
-		log.Task.Warn(client.Provider(), " ", asset, " exchange transaction store failed:", err)
-		return pendingCursor
+	checkpoint := time.UnixMilli(position)
+	start := checkpoint.Add(-exchangeScanOverlap)
+	end := checkpoint.Add(exchangeRecoveryChunk)
+	if end.After(now) {
+		end = now
 	}
-	pending, nextCursor, err := model.PendingExchangeTransactions(client.Provider(), tradeType, start, pendingCursor, 500)
+	if start.Before(end) {
+		hasOrders, err := hasReceivableOrdersInWindow([]model.TradeType{tradeType}, start, end)
+		if err != nil {
+			log.Task.Warn(client.Provider(), " ", asset, " exchange order window query failed:", err)
+			return pendingCursor
+		}
+		if hasOrders {
+			transactions, err := client.ListIncoming(ctx, asset, start, end)
+			if err != nil {
+				log.Task.Warn(client.Provider(), " ", asset, " exchange payment scan failed:", err)
+				return pendingCursor
+			}
+			rows := make([]model.ExchangeTransaction, 0, len(transactions))
+			for _, transaction := range transactions {
+				rows = append(rows, model.ExchangeTransaction{
+					Provider:      transaction.Provider,
+					TransactionID: transaction.TransactionID,
+					TradeType:     tradeType,
+					Asset:         transaction.Asset,
+					Amount:        transaction.Amount.String(),
+					ReceiverUID:   transaction.ReceiverUID,
+					OccurredAt:    transaction.OccurredAt,
+				})
+			}
+			if err := model.StoreExchangeTransactions(rows); err != nil {
+				log.Task.Warn(client.Provider(), " ", asset, " exchange transaction store failed:", err)
+				return pendingCursor
+			}
+		}
+		if err := model.SaveScanCursor(cursorKey, end.UnixMilli()); err != nil {
+			log.Task.Warn(client.Provider(), " ", asset, " exchange cursor save failed:", err)
+			return pendingCursor
+		}
+	}
+
+	pending, nextCursor, err := model.PendingExchangeTransactions(client.Provider(), tradeType, pendingCursor, 500)
 	if err != nil {
 		log.Task.Warn(client.Provider(), " ", asset, " exchange pending transaction query failed:", err)
 		return pendingCursor
@@ -241,4 +278,16 @@ func pollExchange(ctx context.Context, client exchange.Client, asset string, pen
 
 func exchangeCursorKey(provider, asset string) string {
 	return strings.ToLower(strings.TrimSpace(provider)) + ":" + strings.ToUpper(strings.TrimSpace(asset))
+}
+
+func hasReceivableOrdersInWindow(tradeTypes []model.TradeType, start, end time.Time) (bool, error) {
+	if len(tradeTypes) == 0 || !start.Before(end) {
+		return false, nil
+	}
+	var count int64
+	err := model.Db.Model(&model.Order{}).
+		Where("status in (?) and trade_type in (?)", receivableOrderStatuses(), tradeTypes).
+		Where("created_at < ? and expired_at > ?", end, start).
+		Count(&count).Error
+	return count > 0, err
 }

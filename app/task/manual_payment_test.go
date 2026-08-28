@@ -22,7 +22,7 @@ func setupManualPaymentTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Order{}, &model.ManualPaymentClaim{}, &model.Conf{}); err != nil {
+	if err := db.AutoMigrate(&model.Order{}, &model.ManualPaymentClaim{}, &model.PaymentTransactionClaim{}, &model.Conf{}); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 
@@ -142,6 +142,13 @@ func TestManualPaymentCallsOnlyOrderNetworkVerifier(t *testing.T) {
 	if result.Status != model.OrderStatusConfirming || order.Status != model.OrderStatusConfirming {
 		t.Fatalf("order was not moved to confirming: result=%d order=%d", result.Status, order.Status)
 	}
+	var transactionClaim model.PaymentTransactionClaim
+	if err := db.Where("network = ? AND tx_hash = ?", conf.Polygon, txHash).First(&transactionClaim).Error; err != nil {
+		t.Fatalf("load shared transaction claim: %v", err)
+	}
+	if transactionClaim.OrderID != order.ID {
+		t.Fatalf("transaction claim order = %d, want %d", transactionClaim.OrderID, order.ID)
+	}
 }
 
 func TestManualPaymentRejectsOrderReselectedDuringVerification(t *testing.T) {
@@ -224,6 +231,12 @@ func TestManualPaymentRejectsOrderReselectedDuringVerification(t *testing.T) {
 	}
 	if claimCount != 0 {
 		t.Fatalf("stale verification left %d manual payment claim rows", claimCount)
+	}
+	if err := db.Model(&model.PaymentTransactionClaim{}).Where("order_id = ?", order.ID).Count(&claimCount).Error; err != nil {
+		t.Fatalf("count shared transaction claims: %v", err)
+	}
+	if claimCount != 0 {
+		t.Fatalf("stale verification left %d shared transaction claim rows", claimCount)
 	}
 }
 

@@ -196,6 +196,15 @@ func (o *Order) SetFailed() error {
 }
 
 func (o *Order) MarkConfirming(blockNum int, from, hash string, at time.Time, amount decimal.Decimal) error {
+	network, ok := paymentNetworkForTradeType(o.TradeType)
+	if !ok {
+		return fmt.Errorf("unsupported trade type %s", o.TradeType)
+	}
+	hash = NormalizePaymentTransactionReference(network, hash)
+	if hash == "" {
+		return ErrPaymentTransactionInvalid
+	}
+
 	updates := map[string]interface{}{
 		"from_address":  from,
 		"confirmed_at":  at,
@@ -209,21 +218,30 @@ func (o *Order) MarkConfirming(blockNum int, from, hash string, at time.Time, am
 		updates["money"] = rate.Mul(amount).String()
 	}
 
-	query := Db.Model(&Order{}).
-		Where("id = ?", o.ID).
-		Where("(status IN (?) OR (status = ? AND ref_hash = ?))", []uint8{OrderStatusWaiting, OrderStatusExpired}, OrderStatusConfirming, hash).
-		Where("trade_type = ? AND address = ? AND match_address = ? AND address_locked = ?", o.TradeType, o.Address, o.MatchAddress, o.AddressLocked).
-		Where("created_at < ? AND expired_at > ?", at, at)
-	if !o.AddressLocked {
-		query = query.Where("amount = ?", o.Amount)
-	}
+	if err := Db.Transaction(func(tx *gorm.DB) error {
+		if err := ClaimPaymentTransactionTx(tx, o, network, hash); err != nil {
+			return err
+		}
 
-	result := query.Updates(updates)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("order %d is no longer receivable for transaction %s", o.ID, hash)
+		query := tx.Model(&Order{}).
+			Where("id = ?", o.ID).
+			Where("(status IN (?) OR (status = ? AND ref_hash = ?))", []uint8{OrderStatusWaiting, OrderStatusExpired}, OrderStatusConfirming, hash).
+			Where("trade_type = ? AND address = ? AND match_address = ? AND address_locked = ?", o.TradeType, o.Address, o.MatchAddress, o.AddressLocked).
+			Where("created_at < ? AND expired_at > ?", at, at)
+		if !o.AddressLocked {
+			query = query.Where("amount = ?", o.Amount)
+		}
+
+		result := query.Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("order %d is no longer receivable for transaction %s", o.ID, hash)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	o.FromAddress = from
@@ -534,18 +552,31 @@ func CalcTradeAmount(wallets []Wallet, rate decimal.Decimal, p OrderParams) (Wal
 
 	var orders []Order
 	lock := make(map[string]bool)
+	lockedAddresses := make(map[string]bool)
 	var result *gorm.DB
+	lookback := time.Now().Add(GetLookbackHour())
 	if IsExchangeTradeType(p.TradeType) {
-		result = Db.Where("trade_type = ? and expired_at > ?", p.TradeType, time.Now().Add(GetLookbackHour())).Find(&orders)
+		result = Db.Where("trade_type = ? and expired_at > ?", p.TradeType, lookback).Find(&orders)
 	} else {
-		status := []int{OrderStatusConfirming, OrderStatusWaiting}
-		result = Db.Where("status in (?) and trade_type = ?", status, p.TradeType).Find(&orders)
+		status := tradeAllocationStatuses()
+		result = Db.Where("status in (?) and trade_type = ? and expired_at > ?", status, p.TradeType, lookback).Find(&orders)
 	}
 	if result.Error != nil {
 		return Wallet{}, "", fmt.Errorf("load active orders: %w", result.Error)
 	}
 	for _, order := range orders {
-		lock[order.Address+order.Amount] = true
+		address := order.MatchAddress
+		if address == "" {
+			address = order.Address
+		}
+		if address == "" {
+			continue
+		}
+		if order.AddressLocked {
+			lockedAddresses[address] = true
+			continue
+		}
+		lock[address+order.Amount] = true
 	}
 
 	atom, precision := GetAtomicity(p.TradeType)
@@ -562,7 +593,11 @@ func CalcTradeAmount(wallets []Wallet, rate decimal.Decimal, p OrderParams) (Wal
 	var m = 100
 	for {
 		for _, w := range wallets {
-			k := w.GetMatchAddr() + amount.String()
+			address := w.GetMatchAddr()
+			if lockedAddresses[address] {
+				continue
+			}
+			k := address + amount.String()
 			if _, ok := lock[k]; ok {
 				continue
 			}
@@ -581,10 +616,12 @@ func CalcTradeAmount(wallets []Wallet, rate decimal.Decimal, p OrderParams) (Wal
 // LockTradeAddress 检测交易地址，独占使用
 func LockTradeAddress(wallets []Wallet, t TradeType) (Wallet, string, error) {
 	zero := decimal.Zero.String()
-	status := []int{OrderStatusConfirming, OrderStatusWaiting}
+	status := tradeAllocationStatuses()
+	lookback := time.Now().Add(GetLookbackHour())
 	for _, w := range wallets {
 		var o Order
-		result := Db.Where("match_address = ? and status in (?) and trade_type = ? and address_locked = ?", w.GetMatchAddr(), status, t, true).Order("id desc").Limit(1).Find(&o)
+		address := w.GetMatchAddr()
+		result := Db.Where("(match_address = ? or (match_address = '' and address = ?)) and status in (?) and trade_type = ? and expired_at > ?", address, address, status, t, lookback).Order("id desc").Limit(1).Find(&o)
 		if result.Error != nil {
 			return Wallet{}, zero, fmt.Errorf("load locked address orders: %w", result.Error)
 		}
@@ -594,6 +631,10 @@ func LockTradeAddress(wallets []Wallet, t TradeType) (Wallet, string, error) {
 	}
 
 	return Wallet{}, zero, errors.New("暂无可用钱包地址")
+}
+
+func tradeAllocationStatuses() []int {
+	return []int{OrderStatusWaiting, OrderStatusExpired, OrderStatusConfirming}
 }
 
 // CalcTradeExpiredAt 计算订单过期时间 最小180，最大3600，默认1200

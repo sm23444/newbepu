@@ -18,16 +18,16 @@ func TestFormatOKXTimestampUsesMillisecondPrecision(t *testing.T) {
 	}
 }
 
-func TestOKXListIncomingPaginatesWithLastBillTimestamp(t *testing.T) {
-	const firstPageLastTimestamp = int64(1_700_000_000_001)
+func TestOKXListIncomingPaginatesWithLastBillIDWhenTimestampsMatch(t *testing.T) {
+	const sharedTimestamp = int64(1_700_000_000_001)
 	firstPage := make([]okxBill, 100)
 	for i := range firstPage {
 		firstPage[i] = testOKXBill(
-			"bill-"+strconv.Itoa(101-i),
-			firstPageLastTimestamp+int64(99-i),
+			strconv.Itoa(200-i),
+			sharedTimestamp,
 		)
 	}
-	secondPage := []okxBill{testOKXBill("bill-1", firstPageLastTimestamp-1)}
+	secondPage := []okxBill{testOKXBill("100", sharedTimestamp)}
 
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -49,8 +49,8 @@ func TestOKXListIncomingPaginatesWithLastBillTimestamp(t *testing.T) {
 			}
 			_ = json.NewEncoder(writer).Encode(okxBillsResponse{Code: "0", Data: firstPage})
 		case 2:
-			if got, want := request.URL.Query().Get("after"), strconv.FormatInt(firstPageLastTimestamp, 10); got != want {
-				t.Errorf("second page cursor: got %q, want last bill timestamp %q", got, want)
+			if got, want := request.URL.Query().Get("after"), "101"; got != want {
+				t.Errorf("second page cursor: got %q, want last bill ID %q", got, want)
 			}
 			_ = json.NewEncoder(writer).Encode(okxBillsResponse{Code: "0", Data: secondPage})
 		default:
@@ -71,8 +71,8 @@ func TestOKXListIncomingPaginatesWithLastBillTimestamp(t *testing.T) {
 		t.Fatalf("create OKX client: %v", err)
 	}
 	client.validated = true
-	start := time.UnixMilli(firstPageLastTimestamp - 1)
-	end := time.UnixMilli(firstPageLastTimestamp + 100)
+	start := time.UnixMilli(sharedTimestamp - 1)
+	end := time.UnixMilli(sharedTimestamp + 1)
 	transactions, err := client.ListIncoming(context.Background(), "USDT", start, end)
 	if err != nil {
 		t.Fatalf("list incoming OKX bills: %v", err)
