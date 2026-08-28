@@ -157,7 +157,7 @@ func TestMarkConfirmingClaimsTransactionOnlyOnce(t *testing.T) {
 
 func TestMarkConfirmingConcurrentClaimsHaveOneWinner(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "mark-confirming-concurrent-transaction-claim.db")
-	db, err := gorm.Open(sqlite.Open(dbPath+"?cache=shared&mode=rwc&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(dbPath+"?cache=shared&mode=rwc&_pragma=busy_timeout(0)&_pragma=journal_mode(WAL)"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open concurrent test db: %v", err)
 	}
