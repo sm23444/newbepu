@@ -634,7 +634,7 @@ func (t *tron) syncBreak() bool {
 
 	var count int64 = 0
 	result := model.Db.Model(&model.Wallet{}).
-		Where("(status = ? or other_notify = ?) and trade_type in (?)", model.WaStatusEnable, model.WaOtherEnable, trade).
+		Where("other_notify = ? and trade_type in (?)", model.WaOtherEnable, trade).
 		Count(&count)
 	if result.Error != nil {
 		log.Task.Warn("tron wallet query failed:", result.Error)

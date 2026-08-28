@@ -1007,7 +1007,7 @@ func syncBreak(network string, num int) bool {
 
 	var count int64
 	result := model.Db.Model(&model.Wallet{}).
-		Where("(status = ? or other_notify = ?) and trade_type in (?)", model.WaStatusEnable, model.WaOtherEnable, trades).
+		Where("other_notify = ? and trade_type in (?)", model.WaOtherEnable, trades).
 		Count(&count)
 	if result.Error != nil {
 		log.Task.Warn(network, " wallet query failed:", result.Error)
