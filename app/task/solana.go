@@ -461,16 +461,12 @@ func (s *solana) lookbackSlots(ctx context.Context) {
 		return
 	}
 
-	window, ok, err := getLookbackWindow(conf.Solana)
-	if err != nil {
-		log.Task.Warn("solana lookback order query failed:", err)
-		return
-	}
+	startAt, endAt, ok := getLookbackUnix(conf.Solana)
 	if !ok {
 		return
 	}
 
-	start, end, err := blockapi.New().GetBoundaryHeights(window.startAt, window.endAt, conf.Solana)
+	start, end, err := blockapi.New().GetBoundaryHeights(startAt, endAt, conf.Solana)
 	if err != nil {
 		log.Task.Warn("solana lookback boundary query failed:", err)
 		return
@@ -487,5 +483,4 @@ func (s *solana) lookbackSlots(ctx context.Context) {
 		s.slotQueue.In <- i
 		time.Sleep(time.Millisecond * 200)
 	}
-	markLookbackDone(window)
 }

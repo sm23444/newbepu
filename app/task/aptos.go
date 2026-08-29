@@ -31,16 +31,13 @@ type aptos struct {
 	client                 *http.Client
 	retryMu                sync.Mutex
 	retryAttempts          map[version]int
-	progressMu             sync.Mutex
-	forwardProgress        *scanProgress
 }
 
 const aptosVersionRetryMaxAttempts = 5
 
 type version struct {
-	Start   int
-	Limit   int
-	Forward bool
+	Start int
+	Limit int
 }
 
 var apt aptos
@@ -113,30 +110,29 @@ func (a *aptos) syncVersionForward(ctx context.Context) {
 	}
 
 	a.heightMu.Lock()
-	a.lastVersion = now
-	a.heightMu.Unlock()
-	available := blockQueueLimit - a.versionQueue.Len()
-	ranges, err := a.getForwardProgress().schedule(int64(now), int64(a.versionChunkSize), available)
-	if err != nil {
-		log.Task.Warn("Aptos load scan cursor failed:", err)
+	lastVersion := int(boundedForwardCursor(
+		int64(now),
+		int64(a.lastVersion),
+		10000,
+		int64(a.versionChunkSize),
+	))
+	if now <= lastVersion {
+		a.heightMu.Unlock()
 		return
 	}
-	for _, item := range ranges {
-		a.versionQueue.In <- version{
-			Start:   int(item.From),
-			Limit:   int(item.To - item.From + 1),
-			Forward: true,
-		}
-	}
-}
+	a.lastVersion = now
+	a.heightMu.Unlock()
 
-func (a *aptos) getForwardProgress() *scanProgress {
-	a.progressMu.Lock()
-	defer a.progressMu.Unlock()
-	if a.forwardProgress == nil {
-		a.forwardProgress = newScanProgress("aptos")
+	remaining := now - lastVersion
+	for start := lastVersion; remaining > 0; {
+		limit := a.versionChunkSize
+		if remaining < limit {
+			limit = remaining
+		}
+		a.versionQueue.In <- version{Start: start, Limit: limit}
+		start += limit
+		remaining -= limit
 	}
-	return a.forwardProgress
 }
 
 func (a *aptos) lookbackVersion(ctx context.Context) {
@@ -144,16 +140,12 @@ func (a *aptos) lookbackVersion(ctx context.Context) {
 		return
 	}
 
-	window, ok, err := getLookbackWindow(conf.Aptos)
-	if err != nil {
-		log.Task.Warn("aptos lookback order query failed:", err)
-		return
-	}
+	startAt, endAt, ok := getLookbackUnix(conf.Aptos)
 	if !ok {
 		return
 	}
 
-	start, end, err := blockapi.New().GetBoundaryHeights(window.startAt, window.endAt, conf.Aptos)
+	start, end, err := blockapi.New().GetBoundaryHeights(startAt, endAt, conf.Aptos)
 	if err != nil {
 		log.Task.Warn("aptos lookback boundary query failed:", err)
 		return
@@ -174,7 +166,6 @@ func (a *aptos) lookbackVersion(ctx context.Context) {
 		a.versionQueue.In <- version{Start: i, Limit: limit}
 		time.Sleep(time.Millisecond * 200) // 速率控制
 	}
-	markLookbackDone(window)
 }
 
 func (a *aptos) versionDispatch(ctx context.Context) {
@@ -403,12 +394,6 @@ func (a *aptos) versionParse(n any) {
 		generateTransfers(usdcDeposits, usdcFrom, model.UsdcAptos, model.GetTradeDecimal(model.UsdcAptos))
 	}
 
-	if p.Forward {
-		transfers = attachScanBatch(transfers, completeScanRange(
-			a.getForwardProgress(),
-			scanRange{From: int64(p.Start), To: int64(p.Start + p.Limit - 1)},
-		))
-	}
 	if len(transfers) > 0 {
 		transferQueue.In <- transfers
 	}
@@ -422,9 +407,6 @@ func (a *aptos) retryVersion(v version, reason string) {
 	if attempt > aptosVersionRetryMaxAttempts {
 		delete(a.retryAttempts, v)
 		a.retryMu.Unlock()
-		if v.Forward {
-			a.getForwardProgress().retryLater()
-		}
 		log.Task.Warn(fmt.Sprintf("Aptos version %d-%d retry limit reached: %s", v.Start, v.Limit, reason))
 
 		return

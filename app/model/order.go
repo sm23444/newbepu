@@ -29,7 +29,6 @@ const (
 	OrderStatusFailed     = 6 // 交易确认失败
 
 	notifyClaimDuration = 30 * time.Second
-	sqliteBusyRetries   = 5
 
 	BscBnb      TradeType = "bsc.bnb"
 	EthereumEth TradeType = "ethereum.eth"
@@ -219,38 +218,30 @@ func (o *Order) MarkConfirming(blockNum int, from, hash string, at time.Time, am
 		updates["money"] = rate.Mul(amount).String()
 	}
 
-	var transactionErr error
-	for attempt := 0; attempt < sqliteBusyRetries; attempt++ {
-		transactionErr = Db.Transaction(func(tx *gorm.DB) error {
-			if err := ClaimPaymentTransactionTx(tx, o, network, hash); err != nil {
-				return err
-			}
-
-			query := tx.Model(&Order{}).
-				Where("id = ?", o.ID).
-				Where("(status IN (?) OR (status = ? AND ref_hash = ?))", []uint8{OrderStatusWaiting, OrderStatusExpired}, OrderStatusConfirming, hash).
-				Where("trade_type = ? AND address = ? AND match_address = ? AND address_locked = ?", o.TradeType, o.Address, o.MatchAddress, o.AddressLocked).
-				Where("created_at < ? AND expired_at > ?", at, at)
-			if !o.AddressLocked {
-				query = query.Where("amount = ?", o.Amount)
-			}
-
-			result := query.Updates(updates)
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected == 0 {
-				return fmt.Errorf("order %d is no longer receivable for transaction %s", o.ID, hash)
-			}
-			return nil
-		})
-		if transactionErr == nil || !isSQLiteBusyError(transactionErr) {
-			break
+	if err := Db.Transaction(func(tx *gorm.DB) error {
+		if err := ClaimPaymentTransactionTx(tx, o, network, hash); err != nil {
+			return err
 		}
-		time.Sleep(time.Duration(attempt+1) * 10 * time.Millisecond)
-	}
-	if transactionErr != nil {
-		return transactionErr
+
+		query := tx.Model(&Order{}).
+			Where("id = ?", o.ID).
+			Where("(status IN (?) OR (status = ? AND ref_hash = ?))", []uint8{OrderStatusWaiting, OrderStatusExpired}, OrderStatusConfirming, hash).
+			Where("trade_type = ? AND address = ? AND match_address = ? AND address_locked = ?", o.TradeType, o.Address, o.MatchAddress, o.AddressLocked).
+			Where("created_at < ? AND expired_at > ?", at, at)
+		if !o.AddressLocked {
+			query = query.Where("amount = ?", o.Amount)
+		}
+
+		result := query.Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("order %d is no longer receivable for transaction %s", o.ID, hash)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	o.FromAddress = from
@@ -264,11 +255,6 @@ func (o *Order) MarkConfirming(blockNum int, from, hash string, at time.Time, am
 		o.Money = rate.Mul(amount).String()
 	}
 	return nil
-}
-
-func isSQLiteBusyError(err error) bool {
-	var sqliteErr interface{ Code() int }
-	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == 5
 }
 
 func (o *Order) ClaimNotify(force bool) (Order, error) {

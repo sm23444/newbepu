@@ -450,16 +450,12 @@ func (t *ton) lookbackBlocks(ctx context.Context) {
 		return
 	}
 
-	window, ok, err := getLookbackWindow(conf.Ton)
-	if err != nil {
-		log.Task.Warn("ton lookback order query failed:", err)
-		return
-	}
+	startAt, endAt, ok := getLookbackUnix(conf.Ton)
 	if !ok {
 		return
 	}
 
-	start, end, err := blockapi.New().GetBoundaryHeights(window.startAt, window.endAt, conf.Ton)
+	start, end, err := blockapi.New().GetBoundaryHeights(startAt, endAt, conf.Ton)
 	if err != nil {
 		log.Task.Warn("ton lookback boundary query failed:", err)
 		return
@@ -485,5 +481,4 @@ func (t *ton) lookbackBlocks(ctx context.Context) {
 		}
 		time.Sleep(time.Millisecond * 200) // 速率控制
 	}
-	markLookbackDone(window)
 }

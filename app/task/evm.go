@@ -60,15 +60,12 @@ type evm struct {
 	blockRetryAfter  func(time.Duration, func())
 	receiptMu        sync.Mutex
 	receiptAnomalies map[evmReceiptKey]evmReceiptAnomaly
-	progressMu       sync.Mutex
-	forwardProgress  *scanProgress
 }
 
 type evmBlock struct {
 	From    int64
 	To      int64
 	Attempt int
-	Forward bool
 }
 
 type evmRPCRequest struct {
@@ -197,8 +194,8 @@ func splitEVMBlockRange(b evmBlock) []evmBlock {
 
 	middle := b.From + (b.To-b.From)/2
 	return []evmBlock{
-		{From: b.From, To: middle, Attempt: b.Attempt, Forward: b.Forward},
-		{From: middle + 1, To: b.To, Attempt: b.Attempt, Forward: b.Forward},
+		{From: b.From, To: middle, Attempt: b.Attempt},
+		{From: middle + 1, To: b.To, Attempt: b.Attempt},
 	}
 }
 
@@ -206,9 +203,6 @@ func (e *evm) retryBlock(b evmBlock, reason string) {
 	conf.RecordFailure(e.Network)
 	b.Attempt++
 	if b.Attempt > evmBlockRetryMaxAttempts {
-		if b.Forward {
-			e.getForwardProgress().retryLater()
-		}
 		log.Task.Warn(fmt.Sprintf("%s; retry limit reached for blocks %d-%d", reason, b.From, b.To))
 
 		return
@@ -293,25 +287,27 @@ func (e *evm) syncBlocksForward(ctx context.Context) {
 		return
 	}
 
+	var lastBlockNumber int64
+	if value, ok := chainBlockNum.Load(e.Network); ok {
+		lastBlockNumber = value.(int64)
+	}
+	lastBlockNumber = boundedForwardCursor(
+		now,
+		lastBlockNumber,
+		cast.ToInt64(model.GetC(model.BlockHeightMaxDiff)),
+		1,
+	)
 	chainBlockNum.Store(e.Network, now)
-	available := blockQueueLimit - e.blockScanQueue.Len()
-	ranges, err := e.getForwardProgress().schedule(now, blockParseMaxNum, available)
-	if err != nil {
-		log.Task.Warn(e.Network, " load scan cursor failed:", err)
+	if now <= lastBlockNumber {
 		return
 	}
-	for _, item := range ranges {
-		e.blockScanQueue.In <- evmBlock{From: item.From, To: item.To, Forward: true}
+	for from := lastBlockNumber + 1; from <= now; from += blockParseMaxNum {
+		to := from + blockParseMaxNum - 1
+		if to > now {
+			to = now
+		}
+		e.blockScanQueue.In <- evmBlock{From: from, To: to}
 	}
-}
-
-func (e *evm) getForwardProgress() *scanProgress {
-	e.progressMu.Lock()
-	defer e.progressMu.Unlock()
-	if e.forwardProgress == nil {
-		e.forwardProgress = newScanProgress("evm:" + strings.ToLower(strings.TrimSpace(e.Network)))
-	}
-	return e.forwardProgress
 }
 
 func (e *evm) lookbackBlocks(ctx context.Context) {
@@ -319,11 +315,7 @@ func (e *evm) lookbackBlocks(ctx context.Context) {
 		return
 	}
 
-	window, ok, err := getLookbackWindow(model.Network(e.Network))
-	if err != nil {
-		log.Task.Warn(e.Network, " lookback order query failed:", err)
-		return
-	}
+	startAt, endAt, ok := getLookbackUnix(model.Network(e.Network))
 	if !ok {
 		return
 	}
@@ -333,7 +325,7 @@ func (e *evm) lookbackBlocks(ctx context.Context) {
 		interval = time.Millisecond * 300
 	}
 
-	start, end, err := blockapi.New().GetBoundaryHeights(window.startAt, window.endAt, e.Network)
+	start, end, err := blockapi.New().GetBoundaryHeights(startAt, endAt, e.Network)
 	if err != nil {
 		log.Task.Warn(e.Network, " lookback boundary query failed:", err)
 		return
@@ -354,7 +346,6 @@ func (e *evm) lookbackBlocks(ctx context.Context) {
 		e.blockScanQueue.In <- evmBlock{From: i, To: to}
 		time.Sleep(interval)
 	}
-	markLookbackDone(window)
 }
 
 func (e *evm) blockDispatch(ctx context.Context) {
@@ -510,12 +501,6 @@ func (e *evm) getBlockByNumber(a any) {
 	conf.RecordSuccess(e.Network, cast.ToString(b.To))
 
 	allTransfers := append(nativeTransfers, transfers...)
-	if b.Forward {
-		allTransfers = attachScanBatch(allTransfers, completeScanRange(
-			e.getForwardProgress(),
-			scanRange{From: b.From, To: b.To},
-		))
-	}
 	if len(allTransfers) > 0 {
 		transferQueue.In <- allTransfers
 	}

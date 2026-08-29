@@ -30,7 +30,6 @@ type transfer struct {
 	Final       bool            `json:"final"`
 	Source      string          `json:"source"`
 	SourceID    string          `json:"source_id"`
-	scanAck     *scanBatchAck
 }
 
 type resource struct {
@@ -48,13 +47,7 @@ var notOrderQueue = chanx.NewUnboundedChan[[]transfer](context.Background(), 30)
 var transferQueue = chanx.NewUnboundedChan[[]transfer](context.Background(), 30) // 交易转账队列
 
 // lookbackDone 记录已触发过回溯的订单 ID，每个订单只回溯一次。
-var lookbackDone sync.Map // key: int64 order ID, value: time.Time expiration
-
-type lookbackWindow struct {
-	startAt int64
-	endAt   int64
-	orders  map[int64]time.Time
-}
+var lookbackDone sync.Map // key: int64 order ID, value: struct{}
 
 const batchInterval = time.Second * 1       // 批处理缓解数据库读取压力
 const orderCheckInterval = time.Second * 10 // 订单过期检查间隔
@@ -107,7 +100,6 @@ func orderTransferHandle(ctx context.Context) {
 			for _, t := range batch {
 				// 判断数额是否在允许范围内
 				if !model.IsAmountValid(t.TradeType, t.Amount) {
-					acknowledgeTransfer(t)
 					continue
 				}
 
@@ -122,7 +114,6 @@ func orderTransferHandle(ctx context.Context) {
 
 				var matched bool
 				var discarded bool
-				var retrying bool
 				for i, o := range orderList {
 					if !orderTransferMatch(o, t) {
 						continue
@@ -137,7 +128,6 @@ func orderTransferHandle(ctx context.Context) {
 						if err := model.CompleteExchangeTransaction(&o, t.Source, t.SourceID, t.BlockNum, t.FromAddress, t.Timestamp, t.Amount); err != nil {
 							log.Task.Warn("complete exchange transaction failed:", err)
 							retry = append(retry, t)
-							retrying = true
 							break
 						}
 						notifyOrderSuccess(o)
@@ -152,13 +142,11 @@ func orderTransferHandle(ctx context.Context) {
 								break
 							}
 							retry = append(retry, t)
-							retrying = true
 							break
 						}
 						if t.Final {
 							if err := markFinalConfirmed(o); err != nil {
 								retry = append(retry, t)
-								retrying = true
 								break
 							}
 						}
@@ -172,9 +160,6 @@ func orderTransferHandle(ctx context.Context) {
 
 				if !matched && !discarded && t.Source == "" {
 					other = append(other, t)
-				}
-				if !retrying && (matched || discarded || t.Source != "") {
-					acknowledgeTransfer(t)
 				}
 			}
 
@@ -273,10 +258,6 @@ func notOrderTransferHandle(ctx context.Context) {
 					}, wa)
 				}
 			}
-			for _, item := range batch {
-				acknowledgeTransfer(item)
-			}
-
 			batch = batch[:0]
 		}
 	}
@@ -445,26 +426,30 @@ func hasLookbackOrders(tradeType []model.TradeType) bool {
 	return count > 0
 }
 
-func getLookbackWindow(network model.Network) (lookbackWindow, bool, error) {
-	trade := model.GetNetworkTrades(network)
-	if len(trade) == 0 {
-		return lookbackWindow{}, false, nil
+func getLookbackUnix(network model.Network) (startAt, endAt int64, ok bool) {
+	startAt, endAt, orderIDs, ok := pendingLookbackUnix(network)
+	if ok {
+		markLookbackDone(orderIDs)
 	}
 
-	now := time.Now()
-	lookback := now.Add(model.GetLookbackHour())
-	pruneLookbackDone(lookback)
+	return startAt, endAt, ok
+}
 
+func pendingLookbackUnix(network model.Network) (startAt, endAt int64, orderIDs []int64, ok bool) {
+	trade := model.GetNetworkTrades(network)
+	if len(trade) == 0 {
+		return
+	}
+
+	lookback := time.Now().Add(model.GetLookbackHour())
 	var all []model.Order
-	result := model.Db.Model(&model.Order{}).
+	model.Db.Model(&model.Order{}).
 		Where("status in (?) and trade_type in (?)", receivableOrderStatuses(), trade).
 		Where("expired_at > ?", lookback).
 		Order("created_at asc").
 		Find(&all)
-	if result.Error != nil {
-		return lookbackWindow{}, false, result.Error
-	}
 
+	// 过滤掉已经回溯过的订单
 	pending := make([]model.Order, 0, len(all))
 	for _, o := range all {
 		if _, done := lookbackDone.Load(o.ID); !done {
@@ -472,49 +457,33 @@ func getLookbackWindow(network model.Network) (lookbackWindow, bool, error) {
 		}
 	}
 	if len(pending) == 0 {
-		return lookbackWindow{}, false, nil
+		return
 	}
-
-	window := lookbackWindow{
-		startAt: pending[0].CreatedAt.Time().Unix(),
-		endAt:   now.Unix(),
-		orders:  make(map[int64]time.Time, len(pending)),
-	}
-	allExpired := true
-	latestExpiration := int64(0)
+	orderIDs = make([]int64, 0, len(pending))
 	for _, o := range pending {
-		window.orders[o.ID] = o.ExpiredAt
-		if !o.ExpiredAt.Before(now) {
-			allExpired = false
-		}
-		if o.ExpiredAt.Unix() > latestExpiration {
-			latestExpiration = o.ExpiredAt.Unix()
-		}
-	}
-	if allExpired && latestExpiration > 0 {
-		window.endAt = latestExpiration
-	}
-	if window.endAt < window.startAt {
-		window.endAt = window.startAt
+		orderIDs = append(orderIDs, o.ID)
 	}
 
-	return window, true, nil
+	// 起点：最早的创建时间（已按 created_at asc 排序）
+	startAt = pending[0].CreatedAt.Time().Unix()
+
+	// 终点：最晚的已过期 expired_at；若全部尚未过期则用当前时间
+	endAt = time.Now().Unix()
+	for _, o := range pending {
+		if o.ExpiredAt.Before(time.Now()) && o.ExpiredAt.Unix() > startAt {
+			endAt = o.ExpiredAt.Unix()
+		}
+	}
+
+	ok = true
+
+	return
 }
 
-func markLookbackDone(window lookbackWindow) {
-	for id, expiresAt := range window.orders {
-		lookbackDone.Store(id, expiresAt)
+func markLookbackDone(orderIDs []int64) {
+	for _, orderID := range orderIDs {
+		lookbackDone.Store(orderID, struct{}{})
 	}
-}
-
-func pruneLookbackDone(cutoff time.Time) {
-	lookbackDone.Range(func(key, value any) bool {
-		expiresAt, ok := value.(time.Time)
-		if !ok || !expiresAt.After(cutoff) {
-			lookbackDone.Delete(key)
-		}
-		return true
-	})
 }
 
 func expireWaitingOrders() {

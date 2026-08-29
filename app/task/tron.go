@@ -44,13 +44,10 @@ type tron struct {
 	retryMu              sync.Mutex
 	retryAttempts        map[int]int
 	retryScheduled       map[int]*time.Timer
-	progressMu           sync.Mutex
-	forwardProgress      *scanProgress
 }
 
 type tronBlock struct {
-	Number  int
-	Forward bool
+	Number int
 }
 
 var tr tron
@@ -101,27 +98,22 @@ func (t *tron) syncBlocksForward(context.Context) {
 	var now = int(block.BlockHeader.RawData.Number)
 
 	t.heightMu.Lock()
+	lastBlockNum := boundedForwardCursor(
+		int64(now),
+		int64(t.lastBlockNum),
+		int64(cast.ToInt(model.GetC(model.BlockHeightMaxDiff))),
+		1,
+	)
+	if int64(now) <= lastBlockNum {
+		t.heightMu.Unlock()
+		return
+	}
 	t.lastBlockNum = now
 	t.heightMu.Unlock()
 
-	available := blockQueueLimit - t.blockScanQueue.Len()
-	ranges, err := t.getForwardProgress().schedule(int64(now), 1, available)
-	if err != nil {
-		log.Task.Warn("Tron load scan cursor failed:", err)
-		return
+	for number := lastBlockNum + 1; number <= int64(now); number++ {
+		t.blockScanQueue.In <- tronBlock{Number: int(number)}
 	}
-	for _, item := range ranges {
-		t.blockScanQueue.In <- tronBlock{Number: int(item.From), Forward: true}
-	}
-}
-
-func (t *tron) getForwardProgress() *scanProgress {
-	t.progressMu.Lock()
-	defer t.progressMu.Unlock()
-	if t.forwardProgress == nil {
-		t.forwardProgress = newScanProgress("tron")
-	}
-	return t.forwardProgress
 }
 
 func (t *tron) lookbackBlocks(ctx context.Context) {
@@ -129,16 +121,12 @@ func (t *tron) lookbackBlocks(ctx context.Context) {
 		return
 	}
 
-	window, ok, err := getLookbackWindow(conf.Tron)
-	if err != nil {
-		log.Task.Warn("tron lookback order query failed:", err)
-		return
-	}
+	startAt, endAt, ok := getLookbackUnix(conf.Tron)
 	if !ok {
 		return
 	}
 
-	start, end, err := blockapi.New().GetBoundaryHeights(window.startAt, window.endAt, conf.Tron)
+	start, end, err := blockapi.New().GetBoundaryHeights(startAt, endAt, conf.Tron)
 	if err != nil {
 		log.Task.Warn("tron lookback boundary query failed:", err)
 		return
@@ -155,7 +143,6 @@ func (t *tron) lookbackBlocks(ctx context.Context) {
 		t.blockScanQueue.In <- tronBlock{Number: i}
 		time.Sleep(time.Millisecond * 250) // 速率控制
 	}
-	markLookbackDone(window)
 }
 
 func (t *tron) blockDispatch(ctx context.Context) {
@@ -368,13 +355,6 @@ func (t *tron) blockParse(n any) {
 		}
 	}
 
-	progress := t.getForwardProgress()
-	if block.Forward || progress.isScheduled(int64(num)) {
-		transfers = attachScanBatch(transfers, completeScanRange(
-			progress,
-			scanRange{From: int64(num), To: int64(num)},
-		))
-	}
 	if len(transfers) > 0 {
 		transferQueue.In <- transfers
 	}
@@ -661,10 +641,6 @@ func (t *tron) scheduleBlockRetry(block tronBlock, delay time.Duration) {
 	if attempt > tronBlockRetryMaxAttempts {
 		delete(t.retryAttempts, num)
 		t.retryMu.Unlock()
-		progress := t.getForwardProgress()
-		if block.Forward || progress.isScheduled(int64(num)) {
-			progress.retryLater()
-		}
 		log.Task.Warn("Tron 区块达到重试上限：", num)
 
 		return

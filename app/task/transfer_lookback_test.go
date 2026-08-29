@@ -8,7 +8,7 @@ import (
 	"github.com/v03413/bepusdt/app/model"
 )
 
-func TestLookbackWindowCoversMixedExpiredAndWaitingOrders(t *testing.T) {
+func TestLookbackMarksOrdersWhenWindowRequested(t *testing.T) {
 	db := setupManualPaymentTestDB(t)
 	oldLookback := model.GetC(model.PaymentLookbackHour)
 	model.SetK(model.PaymentLookbackHour, "3")
@@ -43,39 +43,20 @@ func TestLookbackWindowCoversMixedExpiredAndWaitingOrders(t *testing.T) {
 		t.Fatalf("create orders: %v", err)
 	}
 
-	window, ok, err := getLookbackWindow(conf.Polygon)
-	if err != nil {
-		t.Fatalf("get lookback window: %v", err)
-	}
+	startAt, _, ok := getLookbackUnix(conf.Polygon)
 	if !ok {
 		t.Fatal("expected a lookback window")
 	}
-	if window.startAt != oldCreated.Unix() {
-		t.Fatalf("startAt=%d, want %d", window.startAt, oldCreated.Unix())
+	if startAt != oldCreated.Unix() {
+		t.Fatalf("startAt=%d, want %d", startAt, oldCreated.Unix())
 	}
-	if window.endAt < now.Add(-time.Second).Unix() {
-		t.Fatalf("mixed-order lookback ended too early: endAt=%d now=%d", window.endAt, now.Unix())
-	}
-	if len(window.orders) != 2 {
-		t.Fatalf("lookback order count=%d, want 2", len(window.orders))
-	}
-	for _, order := range orders {
-		if _, marked := lookbackDone.Load(order.ID); marked {
-			t.Fatalf("order %d was marked done before queueing completed", order.ID)
-		}
-	}
-
-	markLookbackDone(window)
 	for _, order := range orders {
 		if _, marked := lookbackDone.Load(order.ID); !marked {
-			t.Fatalf("order %d was not marked done", order.ID)
+			t.Fatalf("order %d was not marked when lookback window was requested", order.ID)
 		}
 	}
 
-	_, ok, err = getLookbackWindow(conf.Polygon)
-	if err != nil {
-		t.Fatalf("get second lookback window: %v", err)
-	}
+	_, _, ok = getLookbackUnix(conf.Polygon)
 	if ok {
 		t.Fatal("completed orders should not trigger another lookback")
 	}
