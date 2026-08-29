@@ -29,9 +29,6 @@ import (
 const (
 	blockParseMaxNum                 = 10 // 每次解析区块的最大数量
 	evmTransferEvent                 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-	evmBlockRetryMaxAttempts         = 5
-	evmBlockRetryBaseDelay           = 500 * time.Millisecond
-	evmBlockRetryMaxDelay            = 15 * time.Second
 	evmReceiptAnomalyThreshold       = 6
 	evmReceiptAnomalyGracePeriod     = 2 * time.Minute
 	evmReceiptAnomalyObservationTime = 30 * time.Second
@@ -57,15 +54,13 @@ type evm struct {
 	Client           *http.Client
 	blockScanQueue   *chanx.UnboundedChan[evmBlock]
 	LookbackInterval time.Duration // 回溯时每批入队的间隔，控制 RPC 调用速率；默认 500ms
-	blockRetryAfter  func(time.Duration, func())
 	receiptMu        sync.Mutex
 	receiptAnomalies map[evmReceiptKey]evmReceiptAnomaly
 }
 
 type evmBlock struct {
-	From    int64
-	To      int64
-	Attempt int
+	From int64
+	To   int64
 }
 
 type evmRPCRequest struct {
@@ -145,84 +140,10 @@ func parseEVMAmount(value string) (*big.Int, error) {
 	return amount, nil
 }
 
-func evmBlockRetryDelay(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-
-	delay := evmBlockRetryBaseDelay
-	for i := 1; i < attempt; i++ {
-		if delay >= evmBlockRetryMaxDelay/2 {
-			return evmBlockRetryMaxDelay
-		}
-		delay *= 2
-	}
-	if delay > evmBlockRetryMaxDelay {
-		return evmBlockRetryMaxDelay
-	}
-
-	return delay
-}
-
-func shouldSplitEVMBlockRange(reason string) bool {
-	reason = strings.ToLower(reason)
-	markers := []string{
-		"block range is too wide",
-		"block range too wide",
-		"query returned more than",
-		"range is too large",
-		"response size exceeded",
-		"log response size",
-		"too many results",
-		"request entity too large",
-		"status code: 413",
-		"-32005",
-	}
-	for _, marker := range markers {
-		if strings.Contains(reason, marker) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func splitEVMBlockRange(b evmBlock) []evmBlock {
-	if b.From >= b.To {
-		return []evmBlock{b}
-	}
-
-	middle := b.From + (b.To-b.From)/2
-	return []evmBlock{
-		{From: b.From, To: middle, Attempt: b.Attempt},
-		{From: middle + 1, To: b.To, Attempt: b.Attempt},
-	}
-}
-
 func (e *evm) retryBlock(b evmBlock, reason string) {
 	conf.RecordFailure(e.Network)
-	b.Attempt++
-	if b.Attempt > evmBlockRetryMaxAttempts {
-		log.Task.Warn(fmt.Sprintf("%s; retry limit reached for blocks %d-%d", reason, b.From, b.To))
-
-		return
-	}
-	retries := []evmBlock{b}
-	if shouldSplitEVMBlockRange(reason) && b.From < b.To {
-		retries = splitEVMBlockRange(b)
-	}
-	delay := evmBlockRetryDelay(b.Attempt)
-	requeue := func() {
-		for _, retry := range retries {
-			e.blockScanQueue.In <- retry
-		}
-	}
-	if e.blockRetryAfter != nil {
-		e.blockRetryAfter(delay, requeue)
-	} else {
-		time.AfterFunc(delay, requeue)
-	}
-	log.Task.Warn(fmt.Sprintf("%s; retrying %d block range(s) after %s", reason, len(retries), delay))
+	e.blockScanQueue.In <- b
+	log.Task.Warn(fmt.Sprintf("%s; requeued blocks %d-%d", reason, b.From, b.To))
 }
 
 func (e *evm) syncBlocksForward(ctx context.Context) {

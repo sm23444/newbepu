@@ -53,16 +53,18 @@ func TestTronBlockTransactionSucceededChecksExecutionResult(t *testing.T) {
 	}
 }
 
-func TestTronRetryAttemptLimit(t *testing.T) {
+func TestTronRetryContinuesAfterFiveAttempts(t *testing.T) {
 	setEVMTestTaskLogger(t)
 	tr := newTron()
-	tr.retryAttempts[123] = tronBlockRetryMaxAttempts
-	tr.scheduleBlockRetry(tronBlock{Number: 123}, time.Millisecond)
+	tr.retryAttempts[123] = 5
+	tr.scheduleBlockRetry(tronBlock{Number: 123}, time.Hour)
 
-	if _, ok := tr.retryAttempts[123]; ok {
-		t.Fatal("retry state was not cleared after reaching the maximum")
+	if got := tr.retryAttempts[123]; got != 6 {
+		t.Fatalf("retry attempt = %d, want 6", got)
 	}
-	if _, ok := tr.retryScheduled[123]; ok {
-		t.Fatal("retry timer was scheduled after reaching the maximum")
+	timer, ok := tr.retryScheduled[123]
+	if !ok {
+		t.Fatal("retry timer was not scheduled after five attempts")
 	}
+	timer.Stop()
 }

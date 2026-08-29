@@ -42,6 +42,15 @@ func TestLookbackMarksOrdersWhenWindowRequested(t *testing.T) {
 	if err := db.Create(&orders).Error; err != nil {
 		t.Fatalf("create orders: %v", err)
 	}
+	pendingStartAt, _, orderIDs, pendingOK := pendingLookbackUnix(conf.Polygon)
+	if !pendingOK || pendingStartAt != oldCreated.Unix() || len(orderIDs) != len(orders) {
+		t.Fatalf("pending lookback = %d/%v/%v, want start %d and %d orders", pendingStartAt, orderIDs, pendingOK, oldCreated.Unix(), len(orders))
+	}
+	for _, order := range orders {
+		if _, marked := lookbackDone.Load(order.ID); marked {
+			t.Fatalf("order %d was marked before lookback completion", order.ID)
+		}
+	}
 
 	startAt, _, ok := getLookbackUnix(conf.Polygon)
 	if !ok {

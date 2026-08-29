@@ -29,11 +29,7 @@ type aptos struct {
 	heightMu               sync.RWMutex
 	versionQueue           *chanx.UnboundedChan[version]
 	client                 *http.Client
-	retryMu                sync.Mutex
-	retryAttempts          map[version]int
 }
-
-const aptosVersionRetryMaxAttempts = 5
 
 type version struct {
 	Start int
@@ -69,7 +65,6 @@ func newAptos() aptos {
 		lastVersion:            0,
 		versionQueue:           chanx.NewUnboundedChan[version](context.Background(), 30),
 		client:                 utils.NewHttpClient(),
-		retryAttempts:          make(map[version]int),
 	}
 }
 
@@ -182,7 +177,7 @@ func (a *aptos) versionDispatch(ctx context.Context) {
 		select {
 		case n := <-a.versionQueue.Out:
 			if err := p.Invoke(n); err != nil {
-				a.retryVersion(n, fmt.Sprintf("versionDispatch invoke failed: %v", err))
+				a.versionQueue.In <- n
 				log.Task.Warn("versionDispatch Error invoking process slot:", err)
 			}
 		case <-ctx.Done():
@@ -206,7 +201,6 @@ func (a *aptos) versionParse(n any) {
 	resp, err := a.client.Get(url)
 	if err != nil {
 		conf.RecordFailure(net)
-		a.retryVersion(p, fmt.Sprintf("versionParse request failed: %v", err))
 		log.Task.Warn("versionParse Error sending request:", err)
 
 		return
@@ -215,7 +209,6 @@ func (a *aptos) versionParse(n any) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		conf.RecordFailure(net)
-		a.retryVersion(p, fmt.Sprintf("versionParse response status: %d", resp.StatusCode))
 		log.Task.Warn("versionParse Error response status code:", resp.StatusCode)
 
 		return
@@ -224,7 +217,7 @@ func (a *aptos) versionParse(n any) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		conf.RecordFailure(net)
-		a.retryVersion(p, fmt.Sprintf("versionParse read response failed: %v", err))
+		a.versionQueue.In <- p
 		log.Task.Warn("versionParse Error reading response body:", err)
 
 		return
@@ -232,7 +225,7 @@ func (a *aptos) versionParse(n any) {
 
 	if !gjson.ValidBytes(body) {
 		conf.RecordFailure(net)
-		a.retryVersion(p, "versionParse invalid JSON response")
+		a.versionQueue.In <- p
 		log.Task.Warn("versionParse Error: invalid JSON response body")
 
 		return
@@ -240,13 +233,11 @@ func (a *aptos) versionParse(n any) {
 	data := gjson.ParseBytes(body)
 	if !data.IsArray() {
 		conf.RecordFailure(net)
-		a.retryVersion(p, "versionParse response is not an array")
 		log.Task.Warn("versionParse Error: response is not an array")
 
 		return
 	}
 	conf.RecordSuccess(net, cast.ToString(p.Start+p.Limit-1))
-	a.resetVersionRetry(p)
 
 	transfers := make([]transfer, 0)
 	for _, trans := range data.Array() {
@@ -399,29 +390,6 @@ func (a *aptos) versionParse(n any) {
 	}
 
 	log.Task.Info(fmt.Sprintf("区块扫描完成(Aptos) %d.%d 成功率：%s", p.Start, p.Limit, conf.GetSuccessRate(net)))
-}
-
-func (a *aptos) retryVersion(v version, reason string) {
-	a.retryMu.Lock()
-	attempt := a.retryAttempts[v] + 1
-	if attempt > aptosVersionRetryMaxAttempts {
-		delete(a.retryAttempts, v)
-		a.retryMu.Unlock()
-		log.Task.Warn(fmt.Sprintf("Aptos version %d-%d retry limit reached: %s", v.Start, v.Limit, reason))
-
-		return
-	}
-	a.retryAttempts[v] = attempt
-	a.retryMu.Unlock()
-
-	a.versionQueue.In <- v
-	log.Task.Warn(fmt.Sprintf("Aptos version %d-%d retry %d/%d: %s", v.Start, v.Limit, attempt, aptosVersionRetryMaxAttempts, reason))
-}
-
-func (a *aptos) resetVersionRetry(v version) {
-	a.retryMu.Lock()
-	delete(a.retryAttempts, v)
-	a.retryMu.Unlock()
 }
 
 func (a *aptos) parseTransactions(data gjson.Result) []transfer {

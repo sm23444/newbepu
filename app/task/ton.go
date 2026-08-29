@@ -450,7 +450,7 @@ func (t *ton) lookbackBlocks(ctx context.Context) {
 		return
 	}
 
-	startAt, endAt, ok := getLookbackUnix(conf.Ton)
+	startAt, endAt, orderIDs, ok := pendingLookbackUnix(conf.Ton)
 	if !ok {
 		return
 	}
@@ -481,4 +481,6 @@ func (t *ton) lookbackBlocks(ctx context.Context) {
 		}
 		time.Sleep(time.Millisecond * 200) // 速率控制
 	}
+
+	markLookbackDone(orderIDs)
 }

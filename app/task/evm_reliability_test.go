@@ -168,15 +168,10 @@ func TestGetBlockByNumberSkipsZeroAmountTransferWithoutRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	queue := chanx.NewUnboundedChan[evmBlock](ctx, 1)
-	retries := 0
 	e := evm{
 		Network:        conf.Polygon,
 		Client:         server.Client(),
 		blockScanQueue: queue,
-		blockRetryAfter: func(_ time.Duration, retry func()) {
-			retries++
-			retry()
-		},
 	}
 
 	transfers, err := e.parseEventTransfer(
@@ -192,9 +187,6 @@ func TestGetBlockByNumberSkipsZeroAmountTransferWithoutRetry(t *testing.T) {
 
 	e.getBlockByNumber(evmBlock{From: 10, To: 10})
 
-	if retries != 0 {
-		t.Fatalf("zero-amount transfer triggered %d block retries", retries)
-	}
 	if queue.Len() != 0 {
 		t.Fatalf("zero-amount transfer requeued %d block ranges", queue.Len())
 	}
@@ -245,55 +237,22 @@ func TestParseEventTransferSkipsMalformedLogAndKeepsValidTransfer(t *testing.T) 
 	}
 }
 
-func TestRetryBlockBacksOffAndSplitsWideRanges(t *testing.T) {
+func TestRetryBlockRequeuesSameRangeWithoutAttemptLimit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	queue := chanx.NewUnboundedChan[evmBlock](ctx, 4)
+	queue := chanx.NewUnboundedChan[evmBlock](ctx, 8)
 	setEVMTestTaskLogger(t)
-	var delay time.Duration
 	e := evm{
 		Network:        conf.Polygon,
 		blockScanQueue: queue,
-		blockRetryAfter: func(got time.Duration, retry func()) {
-			delay = got
-			retry()
-		},
 	}
-	e.retryBlock(evmBlock{From: 10, To: 19, Attempt: 2}, "query returned more than provider limit")
-
-	if delay != 2*time.Second {
-		t.Fatalf("retry delay = %s, want 2s", delay)
-	}
-	first := <-queue.Out
-	second := <-queue.Out
-	if first != (evmBlock{From: 10, To: 14, Attempt: 3}) || second != (evmBlock{From: 15, To: 19, Attempt: 3}) {
-		t.Fatalf("split retry ranges = %#v, %#v", first, second)
-	}
-}
-
-func TestRetryBlockStopsAfterMaximumAttempts(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	queue := chanx.NewUnboundedChan[evmBlock](ctx, 4)
-	setEVMTestTaskLogger(t)
-	retries := 0
-	e := evm{
-		Network:        conf.Polygon,
-		blockScanQueue: queue,
-		blockRetryAfter: func(_ time.Duration, retry func()) {
-			retries++
-			retry()
-		},
-	}
-	e.retryBlock(evmBlock{From: 10, To: 10, Attempt: evmBlockRetryMaxAttempts}, "temporary RPC failure")
-
-	if retries != 0 {
-		t.Fatalf("retry callbacks = %d, want 0 after maximum attempts", retries)
-	}
-	if queue.Len() != 0 {
-		t.Fatalf("queued retries = %d, want 0 after maximum attempts", queue.Len())
+	want := evmBlock{From: 10, To: 19}
+	for attempt := 1; attempt <= 6; attempt++ {
+		e.retryBlock(want, "temporary RPC failure")
+		if got := <-queue.Out; got != want {
+			t.Fatalf("retry %d requeued %#v, want %#v", attempt, got, want)
+		}
 	}
 }
 
