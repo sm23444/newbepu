@@ -157,7 +157,9 @@ func TestMarkConfirmingClaimsTransactionOnlyOnce(t *testing.T) {
 
 func TestMarkConfirmingConcurrentClaimsHaveOneWinner(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "mark-confirming-concurrent-transaction-claim.db")
-	db, err := gorm.Open(sqlite.Open(dbPath+"?mode=rwc&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"), &gorm.Config{})
+	// Acquire SQLite's write lock at transaction start so concurrent claims wait
+	// for a fresh snapshot instead of failing during deferred-lock promotion.
+	db, err := gorm.Open(sqlite.Open(dbPath+"?mode=rwc&_txlock=immediate&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open concurrent test db: %v", err)
 	}
