@@ -199,6 +199,94 @@ func TestPendingExchangeTransactionsIsolatesTradeTypes(t *testing.T) {
 	}
 }
 
+func TestMarkExchangeTransactionUnmatchedStopsPendingRedispatch(t *testing.T) {
+	db := newExchangeTransactionTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	row := newExchangeTestTransaction(now, "bill-unmatched-final")
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatalf("create transaction: %v", err)
+	}
+
+	if err := MarkExchangeTransactionUnmatched(row.Provider, row.TransactionID); err != nil {
+		t.Fatalf("mark transaction unmatched: %v", err)
+	}
+
+	var stored ExchangeTransaction
+	if err := db.First(&stored, row.ID).Error; err != nil {
+		t.Fatalf("reload transaction: %v", err)
+	}
+	if stored.Status != ExchangeTransactionProcessed || stored.OrderID != 0 {
+		t.Fatalf("unmatched transaction status/order = %d/%d, want %d/0", stored.Status, stored.OrderID, ExchangeTransactionProcessed)
+	}
+	pending, cursor, err := PendingExchangeTransactions(row.Provider, row.TradeType, 0, 10)
+	if err != nil {
+		t.Fatalf("query pending transactions: %v", err)
+	}
+	if len(pending) != 0 || cursor != 0 {
+		t.Fatalf("pending transactions after unmatched resolution = %d/%d, want 0/0", len(pending), cursor)
+	}
+}
+
+func TestMarkExchangeTransactionUnmatchedDoesNotClearExistingClaim(t *testing.T) {
+	db := newExchangeTransactionTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	row := newExchangeTestTransaction(now, "bill-already-claimed")
+	row.Status = ExchangeTransactionProcessed
+	row.OrderID = 77
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatalf("create claimed transaction: %v", err)
+	}
+
+	if err := MarkExchangeTransactionUnmatched(row.Provider, row.TransactionID); err != nil {
+		t.Fatalf("mark claimed transaction unmatched: %v", err)
+	}
+
+	var stored ExchangeTransaction
+	if err := db.First(&stored, row.ID).Error; err != nil {
+		t.Fatalf("reload claimed transaction: %v", err)
+	}
+	if stored.Status != ExchangeTransactionProcessed || stored.OrderID != row.OrderID {
+		t.Fatalf("claimed transaction status/order = %d/%d, want %d/%d", stored.Status, stored.OrderID, ExchangeTransactionProcessed, row.OrderID)
+	}
+}
+
+func TestDeleteExchangeTransactionsBeforeBoundsPendingRetention(t *testing.T) {
+	db := newExchangeTransactionTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	cutoff := now.Add(-7 * 24 * time.Hour)
+	oldCreatedAt := Datetime(cutoff.Add(-time.Hour))
+	oldUpdatedAt := oldCreatedAt
+
+	stalePending := newExchangeTestTransaction(now.Add(-time.Hour), "bill-stale-pending")
+	stalePending.CreatedAt = &oldCreatedAt
+	stalePending.UpdatedAt = &oldUpdatedAt
+	freshRecovered := newExchangeTestTransaction(now.Add(-30*24*time.Hour), "bill-fresh-recovered")
+	freshCreatedAt := Datetime(now)
+	freshUpdatedAt := freshCreatedAt
+	freshRecovered.CreatedAt = &freshCreatedAt
+	freshRecovered.UpdatedAt = &freshUpdatedAt
+	oldProcessed := newExchangeTestTransaction(now.Add(-30*24*time.Hour), "bill-old-processed")
+	oldProcessed.Status = ExchangeTransactionProcessed
+	freshProcessed := newExchangeTestTransaction(now, "bill-fresh-processed")
+	freshProcessed.Status = ExchangeTransactionProcessed
+	rows := []ExchangeTransaction{stalePending, freshRecovered, oldProcessed, freshProcessed}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("create cleanup transactions: %v", err)
+	}
+
+	if err := DeleteExchangeTransactionsBefore(cutoff); err != nil {
+		t.Fatalf("delete old transactions: %v", err)
+	}
+
+	var stored []ExchangeTransaction
+	if err := db.Order("id asc").Find(&stored).Error; err != nil {
+		t.Fatalf("reload cleanup transactions: %v", err)
+	}
+	if len(stored) != 2 || stored[0].TransactionID != freshRecovered.TransactionID || stored[1].TransactionID != freshProcessed.TransactionID {
+		t.Fatalf("remaining transactions = %#v, want fresh pending and processed transactions", stored)
+	}
+}
+
 func TestCompleteExchangeTransactionCommitsOrderAndClaimTogether(t *testing.T) {
 	db := newExchangeTransactionTestDB(t)
 	now := time.Now().UTC().Truncate(time.Second)

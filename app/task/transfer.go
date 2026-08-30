@@ -109,11 +109,13 @@ func orderTransferHandle(ctx context.Context) {
 				orderList, ok := orders[key]
 				if !ok {
 					other = append(other, t)
+					finishUnmatchedExchangeTransfer(t, &retry, false)
 					continue
 				}
 
 				var matched bool
 				var discarded bool
+				var exchangeOrderFound bool
 				for i, o := range orderList {
 					if !orderTransferMatch(o, t) {
 						continue
@@ -121,6 +123,7 @@ func orderTransferHandle(ctx context.Context) {
 
 					// 订单匹配 进入确认流程
 					if t.Source != "" && t.SourceID != "" {
+						exchangeOrderFound = true
 						if !t.Final {
 							log.Task.Warn("exchange transaction is not final: ", t.Source, "/", t.SourceID)
 							continue
@@ -158,8 +161,12 @@ func orderTransferHandle(ctx context.Context) {
 					break
 				}
 
-				if !matched && !discarded && t.Source == "" {
-					other = append(other, t)
+				if !matched && !discarded {
+					if t.Source == "" {
+						other = append(other, t)
+					} else {
+						finishUnmatchedExchangeTransfer(t, &retry, exchangeOrderFound)
+					}
 				}
 			}
 
@@ -176,6 +183,16 @@ func orderTransferHandle(ctx context.Context) {
 				expireWaitingOrders()
 			}
 		}
+	}
+}
+
+func finishUnmatchedExchangeTransfer(t transfer, retry *[]transfer, orderFound bool) {
+	if orderFound || t.Source == "" || t.SourceID == "" || !t.Final {
+		return
+	}
+	if err := model.MarkExchangeTransactionUnmatched(t.Source, t.SourceID); err != nil {
+		log.Task.Warn("mark exchange transaction unmatched failed:", err)
+		*retry = append(*retry, t)
 	}
 }
 

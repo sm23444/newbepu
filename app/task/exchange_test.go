@@ -149,3 +149,72 @@ func TestGetReceivableOrdersUsesHistoricalTransferTime(t *testing.T) {
 		t.Fatalf("historical candidates = %#v", orders[key])
 	}
 }
+
+func TestFinishUnmatchedExchangeTransferStopsPendingRedispatch(t *testing.T) {
+	db := setupExchangeCursorTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	row := model.ExchangeTransaction{
+		Provider:      "okx",
+		TransactionID: "bill-unmatched-task",
+		TradeType:     model.UsdtOKX,
+		Asset:         "USDT",
+		Amount:        "20",
+		ReceiverUID:   "123456789",
+		OccurredAt:    now,
+		Status:        model.ExchangeTransactionPending,
+	}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatalf("create transaction: %v", err)
+	}
+
+	retry := make([]transfer, 0)
+	finishUnmatchedExchangeTransfer(transfer{
+		Source:    row.Provider,
+		SourceID:  row.TransactionID,
+		TradeType: row.TradeType,
+		Final:     true,
+	}, &retry, false)
+
+	if len(retry) != 0 {
+		t.Fatalf("unmatched exchange transfer routed to retry = %d, want 0", len(retry))
+	}
+	var stored model.ExchangeTransaction
+	if err := db.First(&stored, row.ID).Error; err != nil {
+		t.Fatalf("reload transaction: %v", err)
+	}
+	if stored.Status != model.ExchangeTransactionProcessed || stored.OrderID != 0 {
+		t.Fatalf("unmatched transaction status/order = %d/%d, want %d/0", stored.Status, stored.OrderID, model.ExchangeTransactionProcessed)
+	}
+}
+
+func TestFinishUnmatchedExchangeTransferKeepsMatchedTransferPending(t *testing.T) {
+	db := setupExchangeCursorTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	row := model.ExchangeTransaction{
+		Provider:      "okx",
+		TransactionID: "bill-matched-retry",
+		TradeType:     model.UsdtOKX,
+		Asset:         "USDT",
+		Amount:        "20",
+		ReceiverUID:   "123456789",
+		OccurredAt:    now,
+		Status:        model.ExchangeTransactionPending,
+	}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatalf("create transaction: %v", err)
+	}
+
+	retry := []transfer{{Source: row.Provider, SourceID: row.TransactionID, Final: true}}
+	finishUnmatchedExchangeTransfer(retry[0], &retry, true)
+
+	var stored model.ExchangeTransaction
+	if err := db.First(&stored, row.ID).Error; err != nil {
+		t.Fatalf("reload transaction: %v", err)
+	}
+	if stored.Status != model.ExchangeTransactionPending || stored.OrderID != 0 {
+		t.Fatalf("matched transaction status/order = %d/%d, want %d/0", stored.Status, stored.OrderID, model.ExchangeTransactionPending)
+	}
+	if len(retry) != 1 {
+		t.Fatalf("matched transaction retry count = %d, want 1", len(retry))
+	}
+}

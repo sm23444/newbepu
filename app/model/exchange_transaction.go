@@ -215,15 +215,23 @@ func CompleteExchangeTransaction(order *Order, provider, transactionID string, b
 	return nil
 }
 
-func MarkExchangeTransactionProcessed(provider, transactionID string, orderID int64) error {
+// MarkExchangeTransactionUnmatched records that a pending incoming transfer was
+// examined without finding an eligible order, so it is not dispatched again.
+func MarkExchangeTransactionUnmatched(provider, transactionID string) error {
 	return Db.Model(&ExchangeTransaction{}).
-		Where("provider = ? and transaction_id = ?", provider, transactionID).
+		Where("provider = ? and transaction_id = ? and status = ?", provider, transactionID, ExchangeTransactionPending).
 		Updates(map[string]any{
 			"status":   ExchangeTransactionProcessed,
-			"order_id": orderID,
+			"order_id": 0,
 		}).Error
 }
 
 func DeleteExchangeTransactionsBefore(cutoff time.Time) error {
-	return Db.Where("occurred_at < ? and status = ?", cutoff, ExchangeTransactionProcessed).Delete(&ExchangeTransaction{}).Error
+	return Db.Where(
+		"(status = ? and occurred_at < ?) or (status = ? and created_at < ?)",
+		ExchangeTransactionProcessed,
+		cutoff,
+		ExchangeTransactionPending,
+		cutoff,
+	).Delete(&ExchangeTransaction{}).Error
 }
