@@ -189,8 +189,13 @@
         </a-row>
       </a-card>
 
-      <!-- 区块链信息卡片 -->
-      <a-card class="detail-card" title="区块链数据" :bordered="false" v-if="detailData.status === 2 || detailData.status === 5">
+      <!-- 链上支付信息卡片 -->
+      <a-card
+        class="detail-card"
+        title="区块链数据"
+        :bordered="false"
+        v-if="(detailData.status === 2 || detailData.status === 5) && !isExchangeTrade(detailData.trade_type)"
+      >
         <a-row :gutter="24" v-if="detailData.ref_hash">
           <a-col :xs="24" :sm="24" :md="12" v-if="detailData.ref_block_num">
             <div class="detail-item">
@@ -224,6 +229,60 @@
             </div>
           </a-col>
         </a-row>
+      </a-card>
+
+      <!-- 交易所内部转账信息卡片 -->
+      <a-card
+        class="detail-card"
+        title="交易所支付信息"
+        :bordered="false"
+        v-if="(detailData.status === 2 || detailData.status === 5) && isExchangeTrade(detailData.trade_type) && detailData.ref_hash"
+      >
+        <a-row :gutter="24">
+          <a-col :xs="24" :sm="24" :md="12">
+            <div class="detail-item">
+              <div class="detail-label">
+                <icon-safe />
+                <span>交易所</span>
+              </div>
+              <div class="detail-value">{{ getExchangeName(detailData.trade_type) }}</div>
+            </div>
+          </a-col>
+          <a-col :xs="24" :sm="24" :md="12">
+            <div class="detail-item">
+              <div class="detail-label">
+                <icon-tag />
+                <span>交易编号</span>
+              </div>
+              <div class="detail-value hash-value">
+                <a-typography-text copyable>{{ detailData.ref_hash }}</a-typography-text>
+              </div>
+            </div>
+          </a-col>
+          <a-col :xs="24" :sm="24" :md="12">
+            <div class="detail-item">
+              <div class="detail-label">
+                <icon-schedule />
+                <span>发生时间</span>
+              </div>
+              <div class="detail-value">{{ formatDateTime(detailData.confirmed_at || detailData.updated_at) }}</div>
+            </div>
+          </a-col>
+          <a-col :xs="24" :sm="24" :md="12">
+            <div class="detail-item">
+              <div class="detail-label">
+                <icon-check-circle />
+                <span>入账状态</span>
+              </div>
+              <div class="detail-value">
+                <a-tag :color="detailData.status === 2 ? 'green' : 'blue'">
+                  {{ detailData.status === 2 ? "已入账" : "待确认" }}
+                </a-tag>
+              </div>
+            </div>
+          </a-col>
+        </a-row>
+        <div class="exchange-payment-hint">这是交易所内部 UID 转账，不经过公链，因此不显示区块索引或链上详情。</div>
       </a-card>
 
       <!-- 时间信息卡片 -->
@@ -285,6 +344,12 @@ const { dialogWidth } = useLayoutModel();
 const detailDialogWidth = computed(() => dialogWidth("820px"));
 
 const emits = defineEmits(["close", "refresh"]);
+
+const exchangeTradeTypes = new Set(["usdt.binance", "usdt.okx", "usdc.binance", "usdc.okx"]);
+
+const isExchangeTrade = (tradeType: string) => exchangeTradeTypes.has(tradeType);
+
+const getExchangeName = (tradeType: string) => (tradeType.includes("binance") ? "Binance" : "OKX");
 
 const onClose = () => emits("close");
 
@@ -524,6 +589,13 @@ const getCurrencySymbol = (fiat: string) => currencySymbolMap[fiat] || "";
 .trade-type-tag {
   font-weight: 700;
   font-size: 14px;
+}
+
+.exchange-payment-hint {
+  color: var(--color-text-3);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 2px;
 }
 
 @media (max-width: 768px) {
