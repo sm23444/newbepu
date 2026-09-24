@@ -77,8 +77,8 @@ func (t *Telegram) Success(o model.Order) {
 		o.Amount,
 		utils.MaskHash(o.RefHash),
 		utils.MaskAddress(o.Address),
-		o.CreatedAt.Format(time.DateTime),
-		o.UpdatedAt.Format(time.DateTime),
+		formatTelegramTime(o.CreatedAt.Time()),
+		formatTelegramTime(o.UpdatedAt.Time()),
 	)
 
 	t.sendMessage(orderSendMessageParams(text, o, "📝查看交易明细"))
@@ -106,6 +106,10 @@ func orderSendMessageParams(text string, o model.Order, label string) *bot.SendM
 	}
 
 	return params
+}
+
+func formatTelegramTime(at time.Time) string {
+	return at.In(time.Local).Format(time.DateTime)
 }
 
 func orderTransactionReplyMarkup(o model.Order, label string) *models.InlineKeyboardMarkup {
@@ -147,8 +151,8 @@ func notifyFailText(o model.Order, reason string) (string, error) {
 		o.Amount,
 		o.Money, o.Rate,
 		strings.ToUpper(tradeType),
-		o.ConfirmedAt.Format(time.DateTime),
-		utils.CalcNextNotifyTime(*o.ConfirmedAt, o.NotifyNum).Format(time.DateTime),
+		formatTelegramTime(*o.ConfirmedAt),
+		formatTelegramTime(utils.CalcNextNotifyTime(*o.ConfirmedAt, o.NotifyNum)),
 		reason,
 	)
 
@@ -162,7 +166,7 @@ func (t *Telegram) NonOrderTransfer(trans model.TronTransfer, wa model.Wallet) {
 		"\\#账户%s \\#非订单交易\n\\-\\-\\-\n```\n💲交易数额：%v \n💍交易类别："+strings.ToUpper(string(trans.TradeType))+"\n⏱️交易时间：%v\n✅接收地址：%v\n🅾️发送地址：%v```\n",
 		title,
 		trans.Amount.String(),
-		trans.Timestamp.Format(time.DateTime),
+		formatTelegramTime(trans.Timestamp),
 		utils.MaskAddress(trans.RecvAddress),
 		utils.MaskAddress(trans.FromAddress),
 	)
@@ -196,7 +200,7 @@ func (t *Telegram) TronResourceChange(res model.TronResource) {
 
 	text := fmt.Sprintf(
 		"\\#资源动态 \\#能量"+title+"\n\\-\\-\\-\n```\n🔋质押数量："+cast.ToString(res.Balance/1000000)+"\n⏱️交易时间：%v\n✅操作地址：%v\n🅾️资源来源：%v```\n",
-		res.Timestamp.Format(time.DateTime),
+		formatTelegramTime(res.Timestamp),
 		utils.MaskAddress(res.RecvAddress),
 		utils.MaskAddress(res.FromAddress),
 	)

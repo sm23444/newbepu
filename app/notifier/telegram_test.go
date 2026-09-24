@@ -40,6 +40,10 @@ func TestNonOrderTransferTitleMarksOutgoingTransfer(t *testing.T) {
 }
 
 func TestNotifyFailTextUsesClaimedAttemptNumber(t *testing.T) {
+	previousLocal := time.Local
+	time.Local = time.FixedZone("UTC+8", 8*60*60)
+	t.Cleanup(func() { time.Local = previousLocal })
+
 	confirmedAt := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 	order := model.Order{
 		OrderId:     "merchant-order-1",
@@ -56,13 +60,25 @@ func TestNotifyFailTextUsesClaimedAttemptNumber(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build notify failure text: %v", err)
 	}
-	want := utils.CalcNextNotifyTime(confirmedAt, order.NotifyNum).Format(time.DateTime)
-	wrong := utils.CalcNextNotifyTime(confirmedAt, order.NotifyNum+1).Format(time.DateTime)
-	if !strings.Contains(text, want) {
-		t.Fatalf("notification text does not contain next retry time %q", want)
+	wantConfirmed := "2026-07-28 20:00:00"
+	wantNext := "2026-07-28 20:04:00"
+	wrong := formatTelegramTime(utils.CalcNextNotifyTime(confirmedAt, order.NotifyNum+1))
+	if !strings.Contains(text, wantConfirmed) || !strings.Contains(text, wantNext) {
+		t.Fatalf("notification text does not contain local confirmation %q and next retry %q: %s", wantConfirmed, wantNext, text)
 	}
 	if strings.Contains(text, wrong) {
 		t.Fatalf("notification text still uses incremented retry time %q", wrong)
+	}
+}
+
+func TestFormatTelegramTimeUsesLocalTimezone(t *testing.T) {
+	previousLocal := time.Local
+	time.Local = time.FixedZone("UTC+8", 8*60*60)
+	t.Cleanup(func() { time.Local = previousLocal })
+
+	utc := time.Date(2026, 9, 24, 20, 0, 43, 0, time.UTC)
+	if got, want := formatTelegramTime(utc), "2026-09-25 04:00:43"; got != want {
+		t.Fatalf("Telegram time = %q, want %q", got, want)
 	}
 }
 
