@@ -901,7 +901,8 @@
         var amount = d.actual_amount || '--';
         window._qrAmount = amount;
         document.getElementById('orderAmountQ').textContent = (d.money || '--') + (d.fiat ? ' ' + d.fiat : '');
-        document.getElementById('payAmountQ').textContent = amount + ' ' + currency;
+        document.getElementById('payAmountNumberQ').textContent = amount;
+        document.getElementById('payAmountCurrencyQ').textContent = currency;
         var payNetworkQ = document.getElementById('payNetworkQ');
         if (window.renderNetworkTag) {
             window.renderNetworkTag(payNetworkQ, netName || '--', netKey);

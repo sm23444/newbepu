@@ -33,7 +33,7 @@ class FakeElement {
     }
 }
 
-function loadPayment(elements = new Map()) {
+function loadPayment(elements = new Map(), globals = {}) {
     const document = {
         body: new FakeElement(),
         createElement: () => new FakeElement(),
@@ -53,11 +53,13 @@ function loadPayment(elements = new Map()) {
         console,
         Promise,
         setTimeout,
-        clearTimeout
+        clearTimeout,
+        ...globals
     };
     const source = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'), 'utf8');
     vm.runInNewContext(source, context, { filename: 'checkout.js' });
-    return window.Payment;
+    context.Payment = context.window.Payment;
+    return context.window.Payment;
 }
 
 function plain(value) {
@@ -122,6 +124,70 @@ test('updateQrPaymentLogo hides images that fail to load', () => {
     assert.equal(token.src, '');
     assert.equal(network.style.display, 'none');
     assert.equal(network.src, '');
+});
+
+test('payment amount separates number and currency without changing copied precision', async () => {
+    const elements = new Map([
+        'selectionStage', 'paymentStage', 'orderAmountQ', 'payAmountNumberQ',
+        'payAmountCurrencyQ', 'orderIdQ', 'walletAddress', 'cmusToast'
+    ].map((id) => [id, new FakeElement()]));
+    const copied = [];
+    let onReady;
+    let onCopy;
+    elements.set('copyAmountQBtn', {
+        addEventListener: (event, handler) => { if (event === 'click') onCopy = handler; }
+    });
+    const order = {
+        status: 1,
+        trade_type: 'usdt.bsc',
+        token: '0x1234567890abcdef',
+        actual_amount: '48.636400',
+        network: { crypto: 'USDT', name: 'Bsc', key: 'bsc' },
+        money: '321',
+        fiat: 'CNY',
+        order_id: 'PAY20261001110952',
+        expired_at: Math.floor(Date.now() / 1000) + 3600
+    };
+    const window = {
+        location: { pathname: '/pay/amount-test' },
+        navigator: {
+            language: 'zh-CN',
+            clipboard: { writeText: async (text) => { copied.push(text); } }
+        }
+    };
+    loadPayment(elements, {
+        window,
+        navigator: window.navigator,
+        document: {
+            getElementById: (id) => elements.get(id) || null,
+            createElement: () => new FakeElement(),
+            addEventListener: (event, handler) => { if (event === 'DOMContentLoaded') onReady = handler; }
+        },
+        fetch: async () => ({ json: async () => ({ status_code: 200, data: order }) }),
+        $: () => ({ empty: () => {}, qrcode: () => {} }),
+        setInterval: () => 1,
+        clearInterval: () => {},
+        setTimeout: () => 1
+    });
+    onReady();
+    await new Promise(setImmediate);
+
+    assert.equal(elements.get('paymentStage').style.display, 'block');
+    assert.equal(elements.get('payAmountNumberQ').textContent, '48.636400');
+    assert.equal(elements.get('payAmountCurrencyQ').textContent, 'USDT');
+    assert.equal(window._qrAmount, '48.636400');
+    assert.equal(elements.get('cmusToast').textContent, '');
+    assert.equal(typeof onCopy, 'function');
+
+    elements.delete('cmusToast');
+    onCopy();
+    await new Promise(setImmediate);
+    assert.deepEqual(copied, ['48.636400']);
+});
+
+test('payment amount markup retains separate number and currency elements', () => {
+    const html = fs.readFileSync(path.join(__dirname, 'views/checkout.html'), 'utf8');
+    assert.match(html, /id="payAmountQ"><span class="amount-crypto-number" id="payAmountNumberQ"><\/span> <span class="amount-crypto-currency" id="payAmountCurrencyQ"><\/span><\/span>/);
 });
 
 test('checkout script cache key matches its content hash', () => {

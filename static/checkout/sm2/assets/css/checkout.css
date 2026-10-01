@@ -1375,8 +1375,29 @@ body {
     padding-bottom: 16px;
 }
 
+.payment-amount-block .amount-crypto-row {
+    column-gap: 10px;
+}
+
 .payment-amount-block .amount-crypto-value {
+    display: inline-flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    min-width: 0;
     font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+
+.amount-crypto-number {
+    overflow-wrap: anywhere;
+}
+
+.amount-crypto-currency {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
 }
 
 .payment-amount-block .network-tag {
