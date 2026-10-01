@@ -237,3 +237,66 @@ test('sm3 option builder groups the fixed icon frame and left-aligned text', () 
     assert.equal(card.children[2].className, 'payment-option-text');
     assert.deepEqual(Array.from(card.children[2].children, (el) => el.textContent), ['TRON', '波场网络']);
 });
+
+function networkDetailSource() {
+    const source = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'), 'utf8');
+    return source.match(/    function networkName\(network\) \{[\s\S]*?(?=\n    function buildOptionCard)/)[0];
+}
+
+test('sm3 provides localized network subtitles even when backend labels repeat the name', () => {
+    for (const lang of ['zh', 'en']) {
+        const locale = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/locales/' + lang + '.json'), 'utf8'));
+        for (const [network, expected] of Object.entries(locale.networkDetails)) {
+            const actual = vm.runInNewContext(networkDetailSource() + '\nnetworkDetail(method);', {
+                method: { network, token_net_name: network, token_custom_name: network },
+                t: (key, fallback) => locale.networkDetails[key.split('.')[1]] || fallback
+            });
+            assert.equal(actual, expected, lang + ': ' + network);
+        }
+    }
+});
+
+test('sm3 retains non-repeating custom labels for unknown networks', () => {
+    for (const [label, expected] of [['Custom mainnet', 'Custom mainnet'], ['CUSTOM', ''], ['', '']]) {
+        const actual = vm.runInNewContext(networkDetailSource() + '\nnetworkDetail(method);', {
+            method: { network: 'custom', token_custom_name: label },
+            t: (key, fallback) => fallback
+        });
+        assert.equal(actual, expected);
+    }
+});
+
+test('sm3 uses the supplied PNG icon for TRON only', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'), 'utf8');
+    assert.match(source, /key === 'tron'\) return WEB3 \+ '\/network\/tron\.png\?v=sm3-tron-/);
+    assert.ok(fs.existsSync(path.join(__dirname, 'assets/web3icons/network/tron.png')));
+});
+
+test('sm3 uses the cleaned Binance icon with a cache-busting asset key', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'), 'utf8');
+    assert.match(source, /key === 'binance'\) return WEB3 \+ '\/network\/binance\.png\?v=sm3-binance-/);
+    assert.ok(fs.existsSync(path.join(__dirname, 'assets/web3icons/network/binance.png')));
+});
+
+test('sm3 renders the selected design subtitles using production-style method data', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'assets/js/checkout.js'), 'utf8');
+    const renderer = source.match(/    function renderNetworkCards\(\) \{[\s\S]*?(?=\n    function updateAmount)/)[0];
+    const captured = [];
+    const elements = new Map(['networkGrid', 'networkSectionLabel'].map(id => [id, new FakeElement()]));
+    const methods = [
+        ['okx', '欧易交易所'], ['binance', '币安交易所'],
+        ['polygon', 'Polygon'], ['tron', 'Tron'], ['bsc', 'Bsc']
+    ].map(([network, token_net_name]) => ({ network, token_net_name, currency: 'USDT', is_popular: false }));
+    vm.runInNewContext(networkDetailSource() + renderer + '\nrenderNetworkCards();', {
+        document: { getElementById: id => elements.get(id) },
+        methods, selCur: 'USDT', selMethod: null, networkSort: '',
+        sortMethodsByNetwork: list => list,
+        netIcon: () => '', cached: value => value,
+        t: (key, fallback) => fallback,
+        buildOptionCard: options => { captured.push(options); return new FakeElement(); }
+    });
+    assert.deepEqual(captured.map(option => option.detail), [
+        '欧易交易所', '币安交易所', 'Polygon 主网', '波场网络', 'BNB 智能链'
+    ]);
+    assert.ok(captured.every(option => option.ariaLabel.includes(option.detail) && option.badge === ''));
+});

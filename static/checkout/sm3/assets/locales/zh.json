@@ -57,5 +57,20 @@
   "canceledMessage": "该订单已取消，不能继续付款。<br>如需支付，请重新发起订单。",
   "orderCanceledToast": "订单已取消",
   "usdtDetail": "泰达币",
-  "usdcDetail": "美元币"
+  "usdcDetail": "美元币",
+  "networkDetails": {
+    "okx": "欧易交易所",
+    "binance": "币安交易所",
+    "arbitrum": "Arbitrum 主网",
+    "aptos": "Aptos 主网",
+    "base": "Base 主网",
+    "bsc": "BNB 智能链",
+    "ethereum": "以太坊主网",
+    "plasma": "Plasma 主网",
+    "polygon": "Polygon 主网",
+    "solana": "Solana 主网",
+    "ton": "TON 主网",
+    "tron": "波场网络",
+    "xlayer": "X Layer 主网"
+  }
 }

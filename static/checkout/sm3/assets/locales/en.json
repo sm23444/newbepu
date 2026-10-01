@@ -57,5 +57,20 @@
   "canceledMessage": "This order has been canceled and can no longer be paid.<br>Please create a new order to continue.",
   "orderCanceledToast": "Order canceled",
   "usdtDetail": "Tether",
-  "usdcDetail": "USD Coin"
+  "usdcDetail": "USD Coin",
+  "networkDetails": {
+    "okx": "OKX exchange",
+    "binance": "Binance exchange",
+    "arbitrum": "Arbitrum mainnet",
+    "aptos": "Aptos mainnet",
+    "base": "Base mainnet",
+    "bsc": "BNB Smart Chain",
+    "ethereum": "Ethereum mainnet",
+    "plasma": "Plasma mainnet",
+    "polygon": "Polygon mainnet",
+    "solana": "Solana mainnet",
+    "ton": "TON mainnet",
+    "tron": "TRON network",
+    "xlayer": "X Layer mainnet"
+  }
 }
