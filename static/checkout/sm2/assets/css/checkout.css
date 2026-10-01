@@ -312,6 +312,9 @@ body {
     letter-spacing: 0;
     overflow-wrap: anywhere;
 }
+.payment-option-detail.placeholder {
+    visibility: hidden;
+}
 .payment-option-check {
     position: absolute;
     top: 7px;

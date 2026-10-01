@@ -236,6 +236,12 @@
             detail.textContent = options.detail;
             button.appendChild(detail);
         }
+        else {
+            var placeholder = document.createElement('span');
+            placeholder.className = 'payment-option-detail placeholder';
+            placeholder.textContent = '\u00a0';
+            button.appendChild(placeholder);
+        }
         if (options.badge) {
             var badge = document.createElement('span');
             badge.className = 'payment-option-badge';
