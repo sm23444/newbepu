@@ -1087,7 +1087,7 @@ body {
 
 .amount-crypto-row {
     display: grid;
-    grid-template-columns: minmax(0, max-content) auto;
+    grid-template-columns: minmax(0, max-content) max-content;
     column-gap: 8px;
     row-gap: 0;
     align-items: end;
@@ -1104,6 +1104,7 @@ body {
 
 .amount-crypto-row .copy-trigger {
     grid-column: 2;
+    justify-self: start;
     align-self: end;
     margin-bottom: 2px;
 }
@@ -1436,7 +1437,9 @@ body {
 
 /* Hide only the order-summary separators, retaining their spacing. */
 .selection-notice-row + .divider,
-.selection-order-info + .divider { visibility: hidden; }
+.selection-order-info + .divider,
+.payment-amount-block + .divider,
+.payment-order-info + .divider { visibility: hidden; }
 
 .form-section { padding: 20px; }
 
