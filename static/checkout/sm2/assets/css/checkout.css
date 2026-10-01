@@ -995,12 +995,6 @@ body {
 
 
 /* Crypto template overrides. Keep the official DOM intact for stability. */
-.payment-option-icon.network-icon-binance {
-    width: 22px;
-    height: 22px;
-    flex-basis: 22px;
-}
-
 .brand {
     gap: 8px;
 }
