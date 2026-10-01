@@ -1434,6 +1434,10 @@ body {
     background: transparent;
 }
 
+/* Hide only the order-summary separators, retaining their spacing. */
+.selection-notice-row + .divider,
+.selection-order-info + .divider { visibility: hidden; }
+
 .form-section { padding: 20px; }
 
 .form-label {
