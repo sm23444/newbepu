@@ -4,19 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>sm 收银台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="shortcut icon" href="/checkout/sm/assets/img/bepusdt.svg">
-    <link rel="stylesheet" href="/checkout/sm/assets/css/checkout.css?v=17ac5b7140a5">
+    <link rel="stylesheet" href="/checkout/sm/assets/css/checkout.css?v=4aa2a31e7a40">
     <script src="/checkout/sm/assets/js/jquery.min.js"></script>
     <script src="/checkout/sm/assets/js/jquery.qrcode.min.js"></script>
     <script src="/checkout/sm/assets/js/i18next.min.js"></script>
-    <script src="/checkout/sm/assets/js/checkout.js?v=abdabf91c2a7"></script>
+    <script src="/checkout/sm/assets/js/checkout.js?v=6c9b1b6b535c"></script>
 </head>
 <body>
 <div class="checkout-card" id="selectionStage" style="display:none;">
     <div class="card-header">
         <div class="brand">
             <div class="brand-logo">
-                <img src="/checkout/sm/assets/img/sm-pay-logo.png?v=sm-20260722-1" alt="sm Pay">
+                <img src="/checkout/sm/assets/img/sm-pay-logo.png?v=sm-20261001-1" alt="sm Pay">
             </div>
             <span class="brand-name" data-i18n="brandName">smPay</span>
         </div>
@@ -66,7 +69,7 @@
     <div class="card-header">
         <div class="brand">
             <div class="brand-logo">
-                <img src="/checkout/sm/assets/img/sm-pay-logo.png?v=sm-20260722-1" alt="sm Pay">
+                <img src="/checkout/sm/assets/img/sm-pay-logo.png?v=sm-20261001-1" alt="sm Pay">
             </div>
             <span class="brand-name" data-i18n="brandName">smPay</span>
         </div>
@@ -80,7 +83,7 @@
     </div>
     <div class="amount-block payment-amount-block">
         <div class="amount-crypto-row">
-            <span class="amount-crypto-value" id="payAmountQ"></span>
+            <span class="amount-crypto-value" id="payAmountQ"><span class="amount-crypto-number" id="payAmountNumberQ"></span> <span class="amount-crypto-currency" id="payAmountCurrencyQ"></span></span>
             <span class="copy-trigger" id="copyAmountQBtn" data-i18n="[title]copyAmountTitle" title="复制金额">
                 <span class="copy-trigger-icon" id="copyAmountQIcon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

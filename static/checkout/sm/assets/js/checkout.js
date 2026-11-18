@@ -24,7 +24,7 @@
             if (typeof i18next === 'undefined') return resolve();
             i18next.init({ lng: lang, debug: false, resources: {} }, function (err) {
                 if (err) return resolve();
-                fetch('/checkout/sm/assets/locales/' + lang + '.json?v=sm-20260727-3')
+                fetch('/checkout/sm/assets/locales/' + lang + '.json?v=sm-20261001-2')
                     .then(function (r) { return r.json(); })
                     .then(function (d) {
                         i18next.addResourceBundle(lang, 'translation', d);
@@ -72,7 +72,7 @@
         if (l !== 'zh' && l !== 'en') { console.warn('Use "zh" or "en"'); return; }
         if (typeof i18next === 'undefined') return;
         lang = l;
-        fetch('/checkout/sm/assets/locales/' + l + '.json?v=sm-20260727-3')
+        fetch('/checkout/sm/assets/locales/' + l + '.json?v=sm-20261001-2')
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 i18next.addResourceBundle(l, 'translation', d, true, true);
@@ -132,8 +132,9 @@
     function tokenIcon(c) { return WEB3 + '/token/' + (c || '').toUpperCase() + '.svg'; }
     function netIcon(n) {
         var key = (n || '').toLowerCase();
-        if (key === 'binance') return WEB3 + '/network/binance.png?v=sm-20260724-3';
+        if (key === 'binance') return WEB3 + '/network/binance.png?v=sm-binance-20261001';
         if (key === 'okx') return WEB3 + '/network/okx.png?v=sm-20260724-3';
+        if (key === 'tron') return WEB3 + '/network/tron.png?v=sm-tron-652d0ea282cd';
         return WEB3 + '/network/' + key + '.svg';
     }
 
@@ -204,6 +205,28 @@
         return names[key] || key.replace(/[-_]+/g, ' ').toUpperCase();
     }
 
+    function networkDetail(method) {
+        var descriptions = {
+            okx: '欧易交易所',
+            binance: '币安交易所',
+            arbitrum: 'Arbitrum 主网',
+            aptos: 'Aptos 主网',
+            base: 'Base 主网',
+            bsc: 'BNB 智能链',
+            ethereum: '以太坊主网',
+            plasma: 'Plasma 主网',
+            polygon: 'Polygon 主网',
+            solana: 'Solana 主网',
+            ton: 'TON 主网',
+            tron: '波场网络',
+            xlayer: 'X Layer 主网'
+        };
+        var key = String(method.network || '').toLowerCase();
+        if (descriptions[key]) return t('networkDetails.' + key, descriptions[key]);
+        var protocol = method.token_custom_name || method.token_net_name || '';
+        return protocol && protocol.toUpperCase() !== networkName(key) ? protocol : '';
+    }
+
     function buildOptionCard(options) {
         var button = document.createElement('button');
         button.type = 'button';
@@ -226,15 +249,29 @@
         name.className = 'payment-option-name';
         name.textContent = options.name;
 
+        var frame = document.createElement('span');
+        frame.className = 'payment-option-icon-frame';
+        frame.setAttribute('aria-hidden', 'true');
+        frame.appendChild(icon);
+
+        var text = document.createElement('span');
+        text.className = 'payment-option-text';
+        text.appendChild(name);
         button.appendChild(check);
-        button.appendChild(icon);
-        button.appendChild(name);
+        button.appendChild(frame);
+        button.appendChild(text);
 
         if (options.detail) {
             var detail = document.createElement('span');
             detail.className = 'payment-option-detail';
             detail.textContent = options.detail;
-            button.appendChild(detail);
+            text.appendChild(detail);
+        }
+        else {
+            var placeholder = document.createElement('span');
+            placeholder.className = 'payment-option-detail placeholder';
+            placeholder.textContent = '\u00a0';
+            text.appendChild(placeholder);
         }
         if (options.badge) {
             var badge = document.createElement('span');
@@ -344,6 +381,7 @@
         currencies.forEach(function (currency) {
             grid.appendChild(buildOptionCard({
                 name: currency,
+                detail: currency === 'USDT' ? t('usdtDetail', '泰达币') : (currency === 'USDC' ? t('usdcDetail', '美元币') : ''),
                 iconSrc: cached(tokenIcon(currency)),
                 selected: currency === selCur,
                 ariaLabel: t('currencyLabel', '货币') + ' ' + currency,
@@ -377,16 +415,16 @@
             return;
         }
         available.forEach(function (method) {
-            var protocol = (method.token_custom_name || method.token_net_name || '').toUpperCase();
             var name = networkName(method.network);
+            var detail = networkDetail(method);
             grid.appendChild(buildOptionCard({
                 name: name,
-                detail: protocol && protocol !== name ? protocol : '',
+                detail: detail,
                 iconSrc: cached(netIcon(method.network)),
                 iconClass: 'network-icon-' + String(method.network || '').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
                 badge: method.is_popular ? t('hotBadge', '热门') : '',
                 selected: method === selMethod,
-                ariaLabel: t('networkLabel', '网络') + ' ' + name + (protocol ? ' ' + protocol : ''),
+                ariaLabel: t('networkLabel', '网络') + ' ' + name + (detail ? ' ' + detail : ''),
                 onClick: function () {
                     selMethod = method;
                     renderNetworkCards();
@@ -901,7 +939,8 @@
         var amount = d.actual_amount || '--';
         window._qrAmount = amount;
         document.getElementById('orderAmountQ').textContent = (d.money || '--') + (d.fiat ? ' ' + d.fiat : '');
-        document.getElementById('payAmountQ').textContent = amount + ' ' + currency;
+        document.getElementById('payAmountNumberQ').textContent = amount;
+        document.getElementById('payAmountCurrencyQ').textContent = currency;
         var payNetworkQ = document.getElementById('payNetworkQ');
         if (window.renderNetworkTag) {
             window.renderNetworkTag(payNetworkQ, netName || '--', netKey);

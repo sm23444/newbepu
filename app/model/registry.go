@@ -170,7 +170,7 @@ var registry = map[TradeType]TradeTypeConf{
 		AddrCaseSens: true,
 	},
 	UsdtPolygon: {
-		Alias:       "USDT・Polygon",
+		Alias:       "USDT0（原 Polygon USDT）",
 		NetworkName: "Polygon",
 		Network:     conf.Polygon,
 		Crypto:      USDT,

@@ -411,7 +411,7 @@ func (Epusdt) Checkout(ctx *gin.Context) {
 		return
 	}
 
-	// 收银台模板。旧配置可能仍保存已删除的 official/langge，统一回退到 SM。
+	// 收银台模板。旧配置可能仍指向已删除的模板，统一回退到 sm。
 	checkout := model.GetC(model.PaymentCheckout)
 	if _, ok := model.CheckoutList()[checkout]; !ok {
 		checkout = "sm"
