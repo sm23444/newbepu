@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -426,6 +425,20 @@ func getReceivableOrders(transfers []transfer) (map[string][]model.Order, error)
 	return data, nil
 }
 
+// lookbackOrdersPending 判断这些订单中是否还有需要回溯的，条件与 hasLookbackOrders 相同。
+func lookbackOrdersPending(orderIDs []int64) (bool, error) {
+	if len(orderIDs) == 0 {
+		return false, nil
+	}
+	var count int64
+	err := model.Db.Model(&model.Order{}).
+		Where("id in (?)", orderIDs).
+		Where("status in (?)", receivableOrderStatuses()).
+		Where("expired_at > ?", time.Now().Add(model.GetLookbackHour())).
+		Count(&count).Error
+	return count > 0, err
+}
+
 func hasLookbackOrders(tradeType []model.TradeType) bool {
 	var count int64
 	db := model.Db.Model(&model.Order{}).
@@ -560,16 +573,19 @@ func amountMatch(amount decimal.Decimal, target, tradeType string) bool {
 	case model.Classic:
 		return amount.String() == target
 	case model.HasPrefix:
-		s := amount.String()
-		if !strings.HasPrefix(s, target) {
+		t, err := decimal.NewFromString(target)
+		if err != nil {
+			log.Warn(err.Error())
+
 			return false
 		}
-		rest := s[len(target):]
-		if rest == "" {
-			return true
+
+		_, precision := model.GetAtomicity(model.TradeType(tradeType))
+		if p := abs(t.Exponent()); p > precision {
+			precision = p
 		}
 
-		return strings.Contains(target, ".") || strings.HasPrefix(rest, ".")
+		return amount.Truncate(precision).Equal(t)
 	case model.RoundOff:
 		t, err := decimal.NewFromString(target)
 		if err != nil {

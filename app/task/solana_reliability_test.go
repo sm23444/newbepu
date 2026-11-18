@@ -12,22 +12,6 @@ import (
 	"github.com/v03413/bepusdt/app/model"
 )
 
-func TestSolanaAdvanceSlotCursorPersistsLargeJump(t *testing.T) {
-	s := newSolana()
-
-	if _, _, ok := s.advanceSlotCursor(100, 10); ok {
-		t.Fatal("large initial slot jump unexpectedly produced a scan range")
-	}
-	if s.lastSlotNum != 100 {
-		t.Fatalf("last slot = %d, want 100 after skipping a large jump", s.lastSlotNum)
-	}
-
-	start, end, ok := s.advanceSlotCursor(103, 10)
-	if !ok || start != 101 || end != 103 {
-		t.Fatalf("next scan range = %d..%d, %t; want 101..103, true", start, end, ok)
-	}
-}
-
 func TestSolanaTransactionSucceededRejectsMetaError(t *testing.T) {
 	if solanaTransactionSucceeded(gjson.Parse(`{"meta":{"err":{"InstructionError":[1,"Custom"]}}}`)) {
 		t.Fatal("failed Solana transaction reported success")

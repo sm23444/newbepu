@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -32,9 +33,17 @@ import (
 type solana struct {
 	slotConfirmedOffset int
 	lastSlotNum         int
-	heightMu            sync.RWMutex
+	forwardIdle         bool // 因没有待支付订单而暂停了向前扫描
 	slotQueue           *chanx.UnboundedChan[int]
 	client              *http.Client
+	retryMu             sync.Mutex
+	retryAttempts       map[int]int
+	retryScheduled      map[int]*time.Timer
+	retryStopped        map[int]struct{}
+	lookbackMu          sync.Mutex
+	lookbackNext        int
+	lookbackEnd         int
+	lookbackOrderIDs    []int64
 }
 
 type solanaTokenOwner struct {
@@ -50,6 +59,7 @@ func init() {
 	Register(Task{Callback: sol.syncSlotForward, Duration: time.Second * 5})
 	Register(Task{Callback: sol.tradeConfirmHandle, Duration: time.Second * 5})
 	Register(Task{Callback: sol.lookbackSlots, Duration: time.Second * 15})
+	Register(Task{Callback: sol.reconcileExpiredOrders, Duration: time.Minute})
 }
 
 func newSolana() solana {
@@ -58,12 +68,25 @@ func newSolana() solana {
 		lastSlotNum:         0,
 		slotQueue:           chanx.NewUnboundedChan[int](context.Background(), 30),
 		client:              utils.NewHttpClient(),
+		retryAttempts:       make(map[int]int),
+		retryScheduled:      make(map[int]*time.Timer),
+		retryStopped:        make(map[int]struct{}),
 	}
 }
 
-func (s *solana) syncSlotForward(ctx context.Context) {
-	if syncBreak(conf.Solana, s.slotQueue.Len()) {
+func solanaGetBlockPayload(slot int) []byte {
+	return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[%d,{"encoding":"json","maxSupportedTransactionVersion":1,"transactionDetails":"full","rewards":false}]}`, slot))
+}
 
+func (s *solana) syncSlotForward(ctx context.Context) {
+	if queued := s.slotQueue.Len(); syncBreak(conf.Solana, queued) {
+		if queued < blockQueueLimit {
+			s.forwardIdle = true
+		}
+
+		return
+	}
+	if s.pendingSlotRetryCount() >= solanaForwardPauseRetries {
 		return
 	}
 
@@ -99,34 +122,25 @@ func (s *solana) syncSlotForward(ctx context.Context) {
 		return
 	}
 
-	start, end, ok := s.advanceSlotCursor(now, cast.ToInt(model.GetC(model.BlockHeightMaxDiff)))
-	if !ok {
+	if lag := now - s.lastSlotNum; lag > cast.ToInt(model.GetC(model.BlockHeightMaxDiff)) {
+		if s.lastSlotNum == 0 || s.forwardIdle { // 启动或空闲后恢复扫描：直接从最新高度开始
+			s.lastSlotNum = now
+		} else { // 扫描期间落后：继续追赶，不能跳过，其中可能有付款
+			log.Task.Warn(fmt.Sprintf("Solana 扫描落后 %d 个 slot，继续追赶", lag))
+		}
+	}
+	s.forwardIdle = false
+
+	if now <= s.lastSlotNum { // 区块高度没有变化或节点返回旧高度
+
 		return
 	}
 
-	for n := start; n <= end; n++ {
-		// 待扫描区块入列
-
+	// 只填充队列的可用容量；消费后由下一轮继续追赶，避免长时间故障恢复时瞬间过度扫描。
+	for n := s.lastSlotNum + 1; n <= now && s.slotQueue.Len() < blockQueueLimit; n++ {
 		s.slotQueue.In <- n
+		s.lastSlotNum = n
 	}
-
-}
-
-func (s *solana) advanceSlotCursor(now, maxDiff int) (start, end int, ok bool) {
-	s.heightMu.Lock()
-	defer s.heightMu.Unlock()
-
-	last := s.lastSlotNum
-	if now <= last {
-		return 0, 0, false
-	}
-	if now-last > maxDiff {
-		s.lastSlotNum = now
-		return 0, 0, false
-	}
-
-	s.lastSlotNum = now
-	return last + 1, now, true
 }
 
 func (s *solana) slotDispatch(ctx context.Context) {
@@ -158,13 +172,13 @@ func (s *solana) slotDispatch(ctx context.Context) {
 
 func (s *solana) slotParse(n any) {
 	slot := n.(int)
-	post := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[%d,{"encoding":"json","maxSupportedTransactionVersion":0,"transactionDetails":"full","rewards":false}]}`, slot))
+	post := solanaGetBlockPayload(slot)
 	network := conf.Solana
 
 	resp, err := s.client.Post(model.Endpoint(conf.Solana), "application/json", bytes.NewBuffer(post))
 	if err != nil {
 		conf.RecordFailure(network)
-		s.slotQueue.In <- slot
+		s.scheduleSlotRetry(slot)
 		log.Task.Warn("slotParse Error sending request:", err)
 
 		return
@@ -173,7 +187,7 @@ func (s *solana) slotParse(n any) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		conf.RecordFailure(network)
-		s.slotQueue.In <- slot
+		s.scheduleSlotRetry(slot)
 		log.Task.Warn("slotParse Error response status code:", resp.StatusCode)
 
 		return
@@ -182,47 +196,48 @@ func (s *solana) slotParse(n any) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		conf.RecordFailure(network)
-		s.slotQueue.In <- slot
+		s.scheduleSlotRetry(slot)
 		log.Task.Warn("slotParse Error reading response body:", err)
 
 		return
 	}
-	if !gjson.ValidBytes(body) {
+
+	result, err := validateSolanaBlockResponse(body)
+	if errors.Is(err, errSolanaBlockCleanedUp) { // 节点已清理该 slot，重试也拿不到；放弃，不暂停向前扫描
 		conf.RecordFailure(network)
-		s.slotQueue.In <- slot
-		log.Task.Warn("slotParse Error: invalid JSON response body")
+		s.stopSlotRetry(slot)
+		log.Task.Error(fmt.Sprintf("Solana slot %d 已被节点清理，无法扫描，该 slot 内的付款需要人工核对：%s", slot, err))
 
 		return
 	}
-	data := gjson.ParseBytes(body)
-	if !data.IsObject() || !data.Get("result").Exists() || (data.Get("error").Exists() && data.Get("error").Type != gjson.Null) {
+	if err != nil {
 		conf.RecordFailure(network)
-		s.slotQueue.In <- slot
-		log.Task.Warn("slotParse Error: invalid JSON-RPC response")
+		s.scheduleSlotRetry(slot)
+		log.Task.Warn("slotParse Error JSON-RPC response:", err)
 
 		return
 	}
-	if data.Get("result").Type != gjson.Null && !data.Get("result").IsObject() {
-		conf.RecordFailure(network)
-		s.slotQueue.In <- slot
-		log.Task.Warn("slotParse Error: invalid getBlock result")
 
-		return
-	}
 	conf.RecordSuccess(network, cast.ToString(slot))
+	s.resetSlotRetry(slot)
+	if result.Type == gjson.Null {
+		log.Task.Info(fmt.Sprintf("区块已跳过(Solana) %d 成功率：%s", slot, conf.GetSuccessRate(network)))
 
-	timestamp := time.Unix(data.Get("result.blockTime").Int(), 0)
+		return
+	}
 
-	for _, trans := range data.Get("result.transactions").Array() {
-		result := s.parseTransaction(trans, slot, timestamp)
-		if len(result) > 0 {
-			transferQueue.In <- result
+	timestamp := time.Unix(result.Get("blockTime").Int(), 0)
+
+	for _, trans := range result.Get("transactions").Array() {
+		if transfers := s.parseTransaction(trans, slot, timestamp); len(transfers) > 0 {
+			transferQueue.In <- transfers
 		}
 	}
 
 	log.Task.Info(fmt.Sprintf("区块扫描完成(Solana) %d 成功率：%s", slot, conf.GetSuccessRate(network)))
 }
 
+// parseTransaction 解析单笔交易中的 USDT/USDC 转账；getBlock 返回的交易项与 getTransaction 的结果结构相同，都可以传入
 func (s *solana) parseTransaction(trans gjson.Result, slot int, timestamp time.Time) []transfer {
 	if !solanaTransactionSucceeded(trans) {
 		return nil
@@ -320,6 +335,149 @@ func solanaSignatureStatus(status gjson.Result) (finalized, failed bool) {
 	return status.Get("confirmationStatus").String() == "finalized", false
 }
 
+func solanaTxSucceeded(err gjson.Result) bool {
+	return err.Exists() && err.Type == gjson.Null
+}
+
+// getSignatureStatuses 对执行失败的交易同样返回 finalized，必须同时检查 err
+func solanaSignatureFinalized(status gjson.Result) bool {
+	return status.Get("confirmationStatus").String() == "finalized" && solanaTxSucceeded(status.Get("err"))
+}
+
+// Solana JSON-RPC 错误码，参考 https://github.com/anza-xyz/agave/blob/master/rpc-client-api/src/custom_error.rs
+const (
+	solanaErrBlockCleanedUp             = -32001
+	solanaErrSlotSkipped                = -32007
+	solanaErrLongTermStorageSlotSkipped = -32009
+)
+
+// 节点只保留最近一段时间的区块，更早的 slot 返回 -32001，换一个时间重试也不会有
+var errSolanaBlockCleanedUp = errors.New("block cleaned up")
+
+func validateSolanaBlockResponse(body []byte) (gjson.Result, error) {
+	if !gjson.ValidBytes(body) {
+		return gjson.Result{}, fmt.Errorf("invalid JSON response")
+	}
+
+	data := gjson.ParseBytes(body)
+	if rpcErr := data.Get("error"); rpcErr.Exists() {
+		switch rpcErr.Get("code").Int() {
+		case solanaErrSlotSkipped, solanaErrLongTermStorageSlotSkipped: // 被跳过的 slot 没有区块，按空 slot 处理
+			return gjson.Result{Type: gjson.Null}, nil
+		case solanaErrBlockCleanedUp:
+			return gjson.Result{}, fmt.Errorf("%w: %s", errSolanaBlockCleanedUp, rpcErr.Raw)
+		}
+
+		return gjson.Result{}, fmt.Errorf("RPC error: %s", rpcErr.Raw)
+	}
+
+	result := data.Get("result")
+	if !result.Exists() {
+		return gjson.Result{}, fmt.Errorf("missing result")
+	}
+	if result.Type != gjson.Null && !result.Get("transactions").Exists() {
+		return gjson.Result{}, fmt.Errorf("missing result.transactions")
+	}
+
+	return result, nil
+}
+
+func (s *solana) scheduleSlotRetry(slot int) {
+	s.retryMu.Lock()
+	if _, stopped := s.retryStopped[slot]; stopped {
+		s.retryMu.Unlock()
+
+		return
+	}
+	if _, ok := s.retryScheduled[slot]; ok {
+		s.retryMu.Unlock()
+
+		return
+	}
+
+	attempt := s.retryAttempts[slot] + 1
+	if attempt > solanaSlotMaxRetries { // 放弃该 slot，否则向前扫描会一直暂停
+		delete(s.retryAttempts, slot)
+		s.retryMu.Unlock()
+		log.Task.Error(fmt.Sprintf("Solana slot %d 连续 %d 次扫描失败，已放弃，该 slot 内的付款需要人工核对", slot, solanaSlotMaxRetries))
+
+		return
+	}
+	s.retryAttempts[slot] = attempt
+
+	// 待重试的 slot 数量有限，到期直接入队；不再因队列堆积而延后，否则堆积会被计为失败次数
+	var timer *time.Timer
+	timer = time.AfterFunc(solanaRetryDelay(attempt), func() {
+		s.retryMu.Lock()
+		if s.retryScheduled[slot] != timer {
+			s.retryMu.Unlock()
+
+			return
+		}
+		delete(s.retryScheduled, slot)
+		s.retryMu.Unlock()
+
+		s.slotQueue.In <- slot
+	})
+	s.retryScheduled[slot] = timer
+	s.retryMu.Unlock()
+}
+
+func (s *solana) stopSlotRetry(slot int) {
+	s.retryMu.Lock()
+	delete(s.retryAttempts, slot)
+	if timer, ok := s.retryScheduled[slot]; ok {
+		timer.Stop()
+		delete(s.retryScheduled, slot)
+	}
+	s.retryStopped[slot] = struct{}{}
+	s.retryMu.Unlock()
+
+	// 防止同一 slot 的并发请求在终态响应之后重新建立重试；并发请求结束后无需长期保留。
+	time.AfterFunc(time.Minute, func() {
+		s.retryMu.Lock()
+		delete(s.retryStopped, slot)
+		s.retryMu.Unlock()
+	})
+}
+
+func (s *solana) resetSlotRetry(slot int) {
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+
+	delete(s.retryAttempts, slot)
+	if timer, ok := s.retryScheduled[slot]; ok {
+		timer.Stop()
+		delete(s.retryScheduled, slot)
+	}
+}
+
+func (s *solana) pendingSlotRetryCount() int {
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+
+	return len(s.retryAttempts)
+}
+
+// 单个 slot 最多重试 10 次，按 solanaRetryDelay 约 7 分钟
+const solanaSlotMaxRetries = 10
+
+// 待重试的 slot 达到这个数量，说明节点整体故障，暂停向前扫描，避免新 slot 不断进入重试；
+// 个别 slot 失败时继续向前扫描，否则一个 slot 的重试会让之后的付款最多等约 7 分钟
+const solanaForwardPauseRetries = 10
+
+func solanaRetryDelay(attempt int) time.Duration {
+	delays := [...]time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second, time.Minute}
+	if attempt < 1 {
+		attempt = 1
+	}
+	if attempt > len(delays) {
+		attempt = len(delays)
+	}
+
+	return delays[attempt-1]
+}
+
 func (s *solana) parseTransfer(instr gjson.Result, accountKeys []string, tokenAccountMap map[string]solanaTokenOwner) transfer {
 	accounts := instr.Get("accounts").Array()
 	trans := transfer{}
@@ -391,96 +549,121 @@ func (s *solana) parseTransfer(instr gjson.Result, accountKeys []string, tokenAc
 }
 
 func (s *solana) tradeConfirmHandle(ctx context.Context) {
-	var orders = getConfirmingOrders(model.GetNetworkTrades(conf.Solana))
-
-	var handle = func(o model.Order) {
-		if model.GetC(model.BlockOffsetConfirm) == "1" {
-			s.heightMu.RLock()
-			lastSlotNum := s.lastSlotNum
-			s.heightMu.RUnlock()
-			if lastSlotNum == 0 {
-				return
-			}
-			if lastSlotNum-o.RefBlockNum < s.slotConfirmedOffset {
-				return
-			}
-		}
-
+	orders := getConfirmingOrders(model.GetNetworkTrades(conf.Solana))
+	handle := func(o model.Order) {
 		post := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"getSignatureStatuses","params":[["%s"],{"searchTransactionHistory":true}]}`, o.RefHash))
-		req, _ := http.NewRequestWithContext(ctx, "POST", model.Endpoint(conf.Solana), bytes.NewBuffer(post))
+		req, err := http.NewRequestWithContext(ctx, "POST", model.Endpoint(conf.Solana), bytes.NewBuffer(post))
+		if err != nil {
+			log.Task.Warn("solana tradeConfirmHandle Error creating request:", err)
+			return
+		}
 		resp, err := s.client.Do(req)
 		if err != nil {
 			log.Task.Warn("solana tradeConfirmHandle Error sending request:", err)
-
 			return
 		}
-
 		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != http.StatusOK {
 			log.Task.Warn("solana tradeConfirmHandle Error response status code:", resp.StatusCode)
-
 			return
 		}
-
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			log.Task.Warn("solana tradeConfirmHandle Error reading response body:", err)
-
 			return
 		}
-
 		data := gjson.ParseBytes(body)
-		if data.Get("error").Exists() {
-			log.Task.Warn("solana tradeConfirmHandle Error:", data.Get("error").String())
-
+		if rpcErr := data.Get("error"); rpcErr.Exists() && rpcErr.Type != gjson.Null {
+			log.Task.Warn("solana tradeConfirmHandle Error:", rpcErr.String())
 			return
 		}
-
+		if model.GetC(model.BlockOffsetConfirm) == "1" && data.Get("result.context.slot").Int()-int64(o.RefBlockNum) < int64(s.slotConfirmedOffset) {
+			return
+		}
 		finalized, failed := solanaSignatureStatus(data.Get("result.value.0"))
 		if failed {
 			if err := o.SetFailed(); err != nil {
 				log.Task.Warn("solana tradeConfirmHandle SetFailed failed:", err)
-
 				return
 			}
 			tasknotify.Bepusdt(o)
-
 			return
 		}
 		if finalized {
 			markFinalConfirmed(o)
 		}
 	}
-
 	runOrderConfirmations(ctx, orders, handle)
 }
 
 func (s *solana) lookbackSlots(ctx context.Context) {
+	s.lookbackMu.Lock()
+	defer s.lookbackMu.Unlock()
+
+	// 回溯到一半时订单已支付、取消，或已超出回溯时间，剩余区间不再需要。扫描空闲时这里不会执行到下面，
+	// 不清空的话进度会一直保留，下一笔订单到来时接着扫这段旧 slot，节点可能早已清理
+	if s.lookbackNext != 0 {
+		pending, err := lookbackOrdersPending(s.lookbackOrderIDs)
+		if err != nil { // 查询失败不等于订单已结束，保留进度，下一轮再判断
+			log.Task.Warn("Solana 回溯订单查询失败，稍后重试：", err)
+
+			return
+		}
+		if !pending {
+			log.Task.Info(fmt.Sprintf("Solana 回溯的订单已不需要回溯，丢弃剩余回溯区间 %d-%d", s.lookbackNext, s.lookbackEnd))
+			s.resetLookback()
+		}
+	}
+
 	if syncBreak(conf.Solana, s.slotQueue.Len()) {
 		return
 	}
 
-	startAt, endAt, ok := getLookbackUnix(conf.Solana)
-	if !ok {
-		return
+	if s.lookbackNext == 0 {
+		startAt, endAt, orderIDs, ok := pendingLookbackUnix(conf.Solana)
+		if !ok {
+			return
+		}
+
+		start, end, err := blockapi.New().GetBoundaryHeights(startAt, endAt, conf.Solana)
+		if err != nil {
+			log.Task.Warn("Solana 回溯区块范围查询失败，稍后重试：", err)
+
+			return
+		}
+		if !validSolanaLookbackRange(start, end) {
+			log.Task.Warn("Solana 回溯区块范围无效，稍后重试：", start, "-", end)
+
+			return
+		}
+
+		s.lookbackNext = int(start)
+		s.lookbackEnd = int(end)
+		s.lookbackOrderIDs = orderIDs
 	}
 
-	start, end, err := blockapi.New().GetBoundaryHeights(startAt, endAt, conf.Solana)
-	if err != nil {
-		log.Task.Warn("solana lookback boundary query failed:", err)
-		return
-	}
-	for i := int(start); i <= int(end); i++ {
+	for s.lookbackNext <= s.lookbackEnd && s.slotQueue.Len() < blockQueueLimit {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		if syncBreak(conf.Solana, s.slotQueue.Len()) {
-			return
-		}
-		s.slotQueue.In <- i
-		time.Sleep(time.Millisecond * 200)
+		s.slotQueue.In <- s.lookbackNext
+		s.lookbackNext++
 	}
+
+	if s.lookbackNext > s.lookbackEnd {
+		markLookbackDone(s.lookbackOrderIDs)
+		s.resetLookback()
+	}
+}
+
+func (s *solana) resetLookback() {
+	s.lookbackNext = 0
+	s.lookbackEnd = 0
+	s.lookbackOrderIDs = nil
+}
+
+func validSolanaLookbackRange(start, end int64) bool {
+	return start > 0 && end >= start
 }

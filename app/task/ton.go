@@ -334,14 +334,38 @@ func (t *ton) processShard(ctx context.Context, shard *tgo.BlockIDExt, seqno uin
 	return nil
 }
 
-// https://github.com/ton-blockchain/TEPs/blob/63fc78718dd9930f3e106954ebec743c3ad07993/text/0074-jettons-standard.md?plain=1#L226
-// https://github.com/ton-blockchain/token-contract/blob/1182ad99413242f09925d50e70ccb7e0e09f94d4/ft/jetton-wallet.fc#L43
-func (t *ton) parseInternalTransfer(shard *tgo.BlockIDExt, tx *tlb.Transaction, blockNum uint32) (transfer, bool) {
+// tonInboundMessage extracts the inbound internal message and ordinary description shared by both transfer parsers.
+func tonInboundMessage(tx *tlb.Transaction) (*tlb.InternalMessage, tlb.TransactionDescriptionOrdinary, bool) {
+	var description tlb.TransactionDescriptionOrdinary
 	if tx.IO.In == nil {
-		return transfer{}, false
+		return nil, description, false
 	}
 	in, ok := tx.IO.In.Msg.(*tlb.InternalMessage)
 	if !ok || in.Bounced || in.Body == nil {
+		return nil, description, false
+	}
+	description, ok = tx.Description.(tlb.TransactionDescriptionOrdinary)
+	if !ok {
+		return nil, description, false
+	}
+	if description.BouncePhase != nil {
+		if _, ok = description.BouncePhase.Phase.(tlb.BouncePhaseOk); ok {
+			return nil, description, false
+		}
+	}
+
+	return in, description, true
+}
+
+func tonAccountAddr(addr *address.Address) string {
+	return addr.Bounce(false).String()
+}
+
+// https://github.com/ton-blockchain/TEPs/blob/63fc78718dd9930f3e106954ebec743c3ad07993/text/0074-jettons-standard.md?plain=1#L226
+// https://github.com/ton-blockchain/token-contract/blob/1182ad99413242f09925d50e70ccb7e0e09f94d4/ft/jetton-wallet.fc#L43
+func (t *ton) parseInternalTransfer(shard *tgo.BlockIDExt, tx *tlb.Transaction, blockNum uint32) (transfer, bool) {
+	in, description, ok := tonInboundMessage(tx)
+	if !ok {
 		return transfer{}, false
 	}
 	s, err := in.Body.BeginParse()
@@ -353,17 +377,12 @@ func (t *ton) parseInternalTransfer(shard *tgo.BlockIDExt, tx *tlb.Transaction, 
 		return transfer{}, false
 	}
 
-	transOrd, ok := tx.Description.(tlb.TransactionDescriptionOrdinary)
-	if !ok {
-		return transfer{}, false
-	}
-
-	compute, ok := transOrd.ComputePhase.Phase.(tlb.ComputePhaseVM)
+	compute, ok := description.ComputePhase.Phase.(tlb.ComputePhaseVM)
 	if !ok || !compute.Success {
 		return transfer{}, false
 	}
 
-	if transOrd.ActionPhase == nil || !transOrd.ActionPhase.Success {
+	if description.ActionPhase == nil || !description.ActionPhase.Success {
 		return transfer{}, false
 	}
 
@@ -388,8 +407,8 @@ func (t *ton) parseInternalTransfer(shard *tgo.BlockIDExt, tx *tlb.Transaction, 
 		Network:     conf.Ton,
 		TxHash:      hex.EncodeToString(tx.Hash),
 		Amount:      decimal.NewFromBigInt(amount, conf.UsdtTonDecimals),
-		FromAddress: fromOwner.Bounce(false).String(),
-		RecvAddress: toJetton.Bounce(false).String(),
+		FromAddress: tonAccountAddr(fromOwner),
+		RecvAddress: tonAccountAddr(toJetton),
 		Timestamp:   time.Unix(int64(tx.Now), 0),
 		TradeType:   model.UsdtTon,
 		BlockNum:    int(blockNum),
@@ -397,30 +416,19 @@ func (t *ton) parseInternalTransfer(shard *tgo.BlockIDExt, tx *tlb.Transaction, 
 }
 
 func (t *ton) parseTonTransfer(tx *tlb.Transaction, blockNum uint32) (transfer, bool) {
-	in := tx.IO.In
-	if in == nil {
-		return transfer{}, false
-	}
-
-	msg, ok := in.Msg.(*tlb.InternalMessage)
+	msg, _, ok := tonInboundMessage(tx)
 	if !ok {
 		return transfer{}, false
 	}
-	if msg.Bounced {
-		return transfer{}, false
-	}
-	if msg.Amount.Nano().Sign() <= 0 {
-		return transfer{}, false
-	}
-	if msg.Body.BitsSize() != 0 {
+	if msg.Amount.Nano().Sign() <= 0 || msg.Body.BitsSize() != 0 {
 		return transfer{}, false
 	}
 
 	return transfer{
 		Network:     conf.Ton,
 		TxHash:      hex.EncodeToString(tx.Hash),
-		FromAddress: msg.SrcAddr.Bounce(false).String(),
-		RecvAddress: msg.DstAddr.Bounce(false).String(),
+		FromAddress: tonAccountAddr(msg.SrcAddr),
+		RecvAddress: tonAccountAddr(msg.DstAddr),
 		Timestamp:   time.Unix(int64(tx.Now), 0),
 		Amount:      decimal.NewFromBigInt(msg.Amount.Nano(), conf.TonTonDecimals),
 		TradeType:   model.TonGram,

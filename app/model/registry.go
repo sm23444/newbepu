@@ -417,6 +417,15 @@ func GetTradeConfig(t TradeType) (TradeTypeConf, bool) {
 	return c, ok
 }
 
+func GetTradeContract(t TradeType) string {
+	c, ok := registry[t]
+	if !ok {
+		return ""
+	}
+
+	return c.Contract
+}
+
 func GetNetworkTrades(n Network) []TradeType {
 	list, ok := networkTradesMap[n]
 	if !ok {
