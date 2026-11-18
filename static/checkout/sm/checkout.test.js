@@ -284,7 +284,7 @@ test('sm renders the selected design subtitles using production-style method dat
     const captured = [];
     const elements = new Map(['networkGrid', 'networkSectionLabel'].map(id => [id, new FakeElement()]));
     const methods = [
-        ['okx', '欧易交易所'], ['binance', '币安交易所'],
+        ['okx', '欧易用户内部提币'], ['binance', '币安用户站内转账'],
         ['polygon', 'Polygon'], ['tron', 'Tron'], ['bsc', 'Bsc']
     ].map(([network, token_net_name]) => ({ network, token_net_name, currency: 'USDT', is_popular: false }));
     vm.runInNewContext(networkDetailSource() + renderer + '\nrenderNetworkCards();', {
@@ -296,7 +296,7 @@ test('sm renders the selected design subtitles using production-style method dat
         buildOptionCard: options => { captured.push(options); return new FakeElement(); }
     });
     assert.deepEqual(captured.map(option => option.detail), [
-        '欧易交易所', '币安交易所', 'Polygon 主网', '波场网络', 'BNB 智能链'
+        '欧易用户内部提币', '币安用户站内转账', 'USDT0', '波场网络', 'BNB 智能链'
     ]);
     assert.ok(captured.every(option => option.ariaLabel.includes(option.detail) && option.badge === ''));
 });

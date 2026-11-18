@@ -207,15 +207,15 @@
 
     function networkDetail(method) {
         var descriptions = {
-            okx: '欧易交易所',
-            binance: '币安交易所',
+            okx: '欧易用户内部提币',
+            binance: '币安用户站内转账',
             arbitrum: 'Arbitrum 主网',
             aptos: 'Aptos 主网',
             base: 'Base 主网',
             bsc: 'BNB 智能链',
             ethereum: '以太坊主网',
             plasma: 'Plasma 主网',
-            polygon: 'Polygon 主网',
+            polygon: 'USDT0',
             solana: 'Solana 主网',
             ton: 'TON 主网',
             tron: '波场网络',
